@@ -52,6 +52,49 @@ Coinbase WebSocket ──► Ingestion (Python) ──► Kafka
 | Analysis | Pandas, Matplotlib, Seaborn |
 | DevOps | Docker Compose, GitHub Actions |
 
+## Getting started
+
+Requirements: Docker Desktop, plus Python 3.12+ if you want to run the ingestion service outside Docker.
+
+```bash
+git clone https://github.com/vishant0815/crypto-stream-analytics.git
+cd crypto-stream-analytics
+cp .env.example .env
+
+# Start Kafka, create the topics and start streaming live trades
+docker compose -f docker/docker-compose.yml up -d --build
+
+# Watch the ingestion stats (trades/s, tickers/s, errors)
+docker logs -f ingestion
+```
+
+Open Kafka UI at http://localhost:8080 to see messages arriving in `raw.trades` and `raw.ticker`.
+
+**Run the ingestion service without Kafka** (prints live trades to the terminal):
+
+```bash
+cd ingestion
+pip install -r requirements-dev.txt
+python -m app.main --dry-run
+```
+
+**Run the tests**:
+
+```bash
+cd ingestion
+pytest
+```
+
+### Kafka topics
+
+| Topic | Partitions | Retention | Contents |
+| --- | --- | --- | --- |
+| `raw.trades` | 6 | 7 days | Every trade, keyed by pair |
+| `raw.ticker` | 6 | 2 days | Last price, 24h stats, best bid/ask |
+| `agg.metrics` | 3 | 1 day | Candles and indicators (from Spark) |
+| `alerts` | 1 | 30 days | Anomaly alerts (from Spark ML) |
+| `dlq.trades` | 1 | 7 days | Messages that failed validation |
+
 ## Project structure
 
 ```
