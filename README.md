@@ -61,16 +61,24 @@ git clone https://github.com/vishant0815/crypto-stream-analytics.git
 cd crypto-stream-analytics
 cp .env.example .env
 
-# Start Kafka, TimescaleDB, ingestion and the db-writer
+# Start Kafka, TimescaleDB, ingestion, the db-writer and Spark streaming
 docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 
 # Watch live stats
-docker logs -f ingestion    # trades/s and tickers/s from Coinbase
-docker logs -f db-writer    # rows/s written, duplicates skipped, latency
+docker logs -f ingestion        # trades/s and tickers/s from Coinbase
+docker logs -f db-writer        # rows/s written, duplicates skipped, latency
+docker logs -f spark-streaming  # input rate, batch time, state size, watermark
 ```
 
-- Kafka UI: http://localhost:8080 (messages arriving in `raw.trades` and `raw.ticker`)
+- Kafka UI: http://localhost:8080 (messages arriving in `raw.trades`, `raw.ticker` and `agg.metrics`)
+- Spark UI: http://localhost:4040 (Structured Streaming tab: query progress and batch durations)
 - Database: `psql postgresql://crypto:crypto@localhost:5432/crypto`
+
+Already ran an earlier version? The database schema only runs on an empty database, so apply the new migration once:
+
+```bash
+psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/002_candles_and_indicators.sql
+```
 
 Try the analysis queries (candles, VWAP, top movers, latency percentiles, spreads):
 
@@ -91,6 +99,7 @@ python -m app.main --dry-run
 ```bash
 cd ingestion && pytest
 cd ../db-writer && pytest
+cd ../spark && pytest   # needs Java 17 or 21
 
 # db-writer integration tests need a running database with the schema applied
 TEST_DATABASE_URL=postgresql://crypto:crypto@localhost:5432/crypto pytest
@@ -114,11 +123,26 @@ TEST_DATABASE_URL=postgresql://crypto:crypto@localhost:5432/crypto pytest
 | `trades` | Hypertable, 1-day chunks, compressed after 7 days | db-writer | 30 days (full history in HDFS) |
 | `ticker` | Hypertable, compressed after 2 days | db-writer | 7 days |
 | `candles_1m` | Hypertable | Spark Streaming | Kept |
+| `candles_5m` | Continuous aggregate over `candles_1m`, refreshed every minute | TimescaleDB | Kept |
 | `candles_1h` | Continuous aggregate over `candles_1m`, refreshed every 5 min | TimescaleDB | Kept |
+| `candle_indicators` | Hypertable: SMA 5/15/60, VWAP 15, volatility, RSI 14, volume ratio | Spark Streaming | Kept |
 | `alerts` | Hypertable | Spark ML | Kept |
-| `latest_ticker` | View (`DISTINCT ON`) | | |
+| `latest_ticker`, `latest_indicators` | Views (`DISTINCT ON`) | | |
 
 The db-writer loads each batch with `COPY` into a staging table, then `INSERT ... ON CONFLICT DO NOTHING`. Kafka offsets are committed only after the database commit, so a crash replays the batch and duplicates are skipped: each trade is stored exactly once.
+
+### Stream processing (Spark Structured Streaming)
+
+One Spark job runs two queries on `raw.trades`, both with a 30-second watermark on exchange time and de-duplication by trade ID (Coinbase resends recent trades after every reconnect):
+
+| Query | Trigger | Output mode | Writes |
+| --- | --- | --- | --- |
+| `live-candles` | 1 s | update | The current minute's candle, changing with every trade, to `candles_1m` and `agg.metrics` |
+| `indicators` | 10 s | append | Each candle once its minute is final; loads the previous hour from TimescaleDB over JDBC and computes indicators with Spark window functions, to `candle_indicators` and `agg.metrics` |
+
+- Moving windows are **time-based** (`rangeBetween` on the minute), so a minute with no trades doesn't stretch a 15-minute average over 16 minutes, and an indicator stays null until its window is full.
+- Window state is kept in **RocksDB** and checkpointed, so after a restart the job continues from its last Kafka offsets with its open windows intact.
+- Every write is an **upsert**, so a micro-batch that is re-run after a failure changes nothing.
 
 ## Project structure
 
@@ -127,8 +151,8 @@ crypto-stream-analytics/
 ├── ingestion/          # WebSocket client and Kafka producer
 ├── db-writer/          # Kafka consumer writing trades to TimescaleDB
 ├── spark/
-│   ├── streaming/      # metrics, anomaly scoring, raw archive
-│   └── batch/          # Hive summaries, ML training
+│   ├── streaming/      # candles and indicators job (Structured Streaming)
+│   └── tests/          # unit tests for the candle and indicator logic
 ├── db/
 │   ├── migrations/     # schema, hypertables, policies
 │   └── queries/        # analysis queries
@@ -144,7 +168,7 @@ crypto-stream-analytics/
 
 - [x] Ingestion service and Kafka setup
 - [x] TimescaleDB schema and first queries
-- [ ] Spark streaming: candles and indicators
+- [x] Spark streaming: candles and indicators
 - [ ] FastAPI and live dashboard
 - [ ] HDFS archive, Hive tables, batch analytics
 - [ ] ML anomaly detection and live scoring

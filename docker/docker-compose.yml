@@ -116,6 +116,29 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  spark-streaming:
+    build: ../spark
+    container_name: spark-streaming
+    ports:
+      - "4040:4040"   # Spark UI: streaming query progress, batch times, state size
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crypto}:${POSTGRES_PASSWORD:-crypto}@timescaledb:5432/${POSTGRES_DB:-crypto}
+    volumes:
+      - spark-checkpoints:/data/checkpoints
+    # Time to stop the streaming queries cleanly before Docker kills the container
+    stop_grace_period: 30s
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   kafka-data:
   timescale-data:
+  spark-checkpoints:
