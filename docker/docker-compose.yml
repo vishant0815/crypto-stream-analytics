@@ -80,5 +80,42 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  timescaledb:
+    image: timescale/timescaledb:2.22.1-pg16
+    container_name: timescaledb
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+      POSTGRES_USER: ${POSTGRES_USER:-crypto}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crypto}
+      TIMESCALEDB_TELEMETRY: "off"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      # Schema runs automatically on the first start of an empty database
+      - ../db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  db-writer:
+    build: ../db-writer
+    container_name: db-writer
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crypto}:${POSTGRES_PASSWORD:-crypto}@timescaledb:5432/${POSTGRES_DB:-crypto}
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   kafka-data:
+  timescale-data:

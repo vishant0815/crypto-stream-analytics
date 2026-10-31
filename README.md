@@ -54,21 +54,29 @@ Coinbase WebSocket ──► Ingestion (Python) ──► Kafka
 
 ## Getting started
 
-Requirements: Docker Desktop, plus Python 3.12+ if you want to run the ingestion service outside Docker.
+Requirements: Docker Desktop, plus Python 3.12+ if you want to run services outside Docker.
 
 ```bash
 git clone https://github.com/vishant0815/crypto-stream-analytics.git
 cd crypto-stream-analytics
 cp .env.example .env
 
-# Start Kafka, create the topics and start streaming live trades
-docker compose -f docker/docker-compose.yml up -d --build
+# Start Kafka, TimescaleDB, ingestion and the db-writer
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 
-# Watch the ingestion stats (trades/s, tickers/s, errors)
-docker logs -f ingestion
+# Watch live stats
+docker logs -f ingestion    # trades/s and tickers/s from Coinbase
+docker logs -f db-writer    # rows/s written, duplicates skipped, latency
 ```
 
-Open Kafka UI at http://localhost:8080 to see messages arriving in `raw.trades` and `raw.ticker`.
+- Kafka UI: http://localhost:8080 (messages arriving in `raw.trades` and `raw.ticker`)
+- Database: `psql postgresql://crypto:crypto@localhost:5432/crypto`
+
+Try the analysis queries (candles, VWAP, top movers, latency percentiles, spreads):
+
+```bash
+psql postgresql://crypto:crypto@localhost:5432/crypto -f db/queries/analysis.sql
+```
 
 **Run the ingestion service without Kafka** (prints live trades to the terminal):
 
@@ -81,8 +89,11 @@ python -m app.main --dry-run
 **Run the tests**:
 
 ```bash
-cd ingestion
-pytest
+cd ingestion && pytest
+cd ../db-writer && pytest
+
+# db-writer integration tests need a running database with the schema applied
+TEST_DATABASE_URL=postgresql://crypto:crypto@localhost:5432/crypto pytest
 ```
 
 ### Kafka topics
@@ -95,15 +106,32 @@ pytest
 | `alerts` | 1 | 30 days | Anomaly alerts (from Spark ML) |
 | `dlq.trades` | 1 | 7 days | Messages that failed validation |
 
+### Database design
+
+| Table | Type | Written by | Retention |
+| --- | --- | --- | --- |
+| `pairs` | Reference table | Seed data, db-writer | Kept |
+| `trades` | Hypertable, 1-day chunks, compressed after 7 days | db-writer | 30 days (full history in HDFS) |
+| `ticker` | Hypertable, compressed after 2 days | db-writer | 7 days |
+| `candles_1m` | Hypertable | Spark Streaming | Kept |
+| `candles_1h` | Continuous aggregate over `candles_1m`, refreshed every 5 min | TimescaleDB | Kept |
+| `alerts` | Hypertable | Spark ML | Kept |
+| `latest_ticker` | View (`DISTINCT ON`) | | |
+
+The db-writer loads each batch with `COPY` into a staging table, then `INSERT ... ON CONFLICT DO NOTHING`. Kafka offsets are committed only after the database commit, so a crash replays the batch and duplicates are skipped: each trade is stored exactly once.
+
 ## Project structure
 
 ```
 crypto-stream-analytics/
 ├── ingestion/          # WebSocket client and Kafka producer
+├── db-writer/          # Kafka consumer writing trades to TimescaleDB
 ├── spark/
 │   ├── streaming/      # metrics, anomaly scoring, raw archive
 │   └── batch/          # Hive summaries, ML training
-├── db/                 # SQL migrations and TimescaleDB policies
+├── db/
+│   ├── migrations/     # schema, hypertables, policies
+│   └── queries/        # analysis queries
 ├── hive/               # external table definitions
 ├── api/                # FastAPI app, WebSocket, Redis cache
 ├── dashboard/          # React frontend
@@ -114,8 +142,8 @@ crypto-stream-analytics/
 
 ## Roadmap
 
-- [ ] Ingestion service and Kafka setup
-- [ ] TimescaleDB schema and first queries
+- [x] Ingestion service and Kafka setup
+- [x] TimescaleDB schema and first queries
 - [ ] Spark streaming: candles and indicators
 - [ ] FastAPI and live dashboard
 - [ ] HDFS archive, Hive tables, batch analytics
