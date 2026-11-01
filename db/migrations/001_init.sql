@@ -155,7 +155,14 @@ CREATE INDEX alerts_pair_time_idx ON alerts (pair_id, time DESC);
 -- ---------------------------------------------------------------------
 -- Read-only role for the API (Phase 4): it can query, never write
 -- ---------------------------------------------------------------------
-CREATE ROLE dashboard_reader NOLOGIN;
+-- Roles are server-wide, so skip creating it if another database already did
+DO $$
+BEGIN
+    CREATE ROLE dashboard_reader NOLOGIN;
+EXCEPTION WHEN duplicate_object THEN
+    NULL;
+END
+$$;
 GRANT USAGE ON SCHEMA public TO dashboard_reader;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO dashboard_reader;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO dashboard_reader;
