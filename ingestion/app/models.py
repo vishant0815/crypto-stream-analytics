@@ -34,6 +34,9 @@ class Trade(BaseModel):
     side: Literal["BUY", "SELL"]
     exchange_time: datetime
     ingest_time: datetime
+    # True for the batch of recent trades Coinbase sends right after (re)connecting.
+    # They are real trades, but old, so they are left out of latency figures.
+    replay: bool = False
 
     _parse_time = field_validator("exchange_time", "ingest_time", mode="before")(_to_datetime)
 
@@ -78,6 +81,7 @@ def parse_market_trades(message: dict[str, Any]) -> ParseResult:
     result = ParseResult()
     ingest_time = utc_now()
     for event in message.get("events", []):
+        replay = event.get("type") == "snapshot"
         for raw in event.get("trades", []):
             try:
                 result.events.append(
@@ -89,6 +93,7 @@ def parse_market_trades(message: dict[str, Any]) -> ParseResult:
                         side=raw.get("side"),
                         exchange_time=raw.get("time"),
                         ingest_time=ingest_time,
+                        replay=replay,
                     )
                 )
             except ValidationError as exc:

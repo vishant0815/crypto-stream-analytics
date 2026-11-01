@@ -73,3 +73,8 @@ def test_missing_field_is_rejected():
 def test_decode_rejects_non_objects(raw):
     with pytest.raises(BadMessage):
         decode(raw)
+
+
+def test_replay_flag_defaults_to_false_for_older_messages():
+    assert to_trade_row({**TRADE, "replay": True}).is_replay is True
+    assert to_trade_row(TRADE).is_replay is False

@@ -20,6 +20,7 @@ class TradeRow:
     size: Decimal
     side: str
     ingest_time: datetime
+    is_replay: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,8 @@ def to_trade_row(data: dict[str, Any]) -> TradeRow:
             size=_positive(data["size"]),
             side=_side(data["side"]),
             ingest_time=_time(data["ingest_time"]),
+            # Messages from before the flag existed have no "replay" field
+            is_replay=data.get("replay") is True,
         )
     except (KeyError, TypeError, ValueError, ArithmeticError) as exc:
         raise BadMessage(f"bad trade: {exc!r}") from exc
