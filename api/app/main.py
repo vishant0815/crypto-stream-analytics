@@ -165,6 +165,17 @@ async def pipeline(request: Request) -> dict[str, Any]:
     return {**stats, "live": {**hub.state.health(), "kafka_connected": hub.kafka_connected, "ws_clients": len(hub.clients)}}
 
 
+@app.get("/api/analytics", tags=["batch"])
+async def analytics(
+    request: Request,
+    days: Annotated[int, Query(ge=1, le=90)] = 14,
+) -> dict[str, Any]:
+    """Nightly batch results from the HDFS archive: daily summary per pair, hourly activity,
+    pair correlations for the latest day, and the last batch runs with their HDFS vs
+    TimescaleDB reconciliation."""
+    return await cached(request, f"cache:analytics:{days}", lambda: request.app.state.db.analytics(days))
+
+
 # ------------------------------------------------------------------------- websocket
 
 @app.websocket("/ws/live")

@@ -7,6 +7,7 @@ import PriceChart from './components/PriceChart.jsx'
 import IndicatorPanel from './components/IndicatorPanel.jsx'
 import TradeTape from './components/TradeTape.jsx'
 import PipelineDetails from './components/PipelineDetails.jsx'
+import BatchHistory from './components/BatchHistory.jsx'
 
 const REPO = 'https://github.com/vishant0815/crypto-stream-analytics'
 
@@ -48,6 +49,7 @@ export default function App() {
   const now = useNow(500)
   const overview = usePolling('/api/overview', null, 30000)
   const pipeline = usePolling('/api/pipeline', null, 5000)
+  const analytics = usePolling('/api/analytics', { days: 14 }, 300000) // changes once a night
   const subscribe = useCallback(live.subscribe, []) // stable identity for effects
 
   const selectPair = (p) => {
@@ -113,8 +115,11 @@ export default function App() {
 
       <PipelineDetails pipeline={pipeline} />
 
+      <BatchHistory analytics={analytics} />
+
       <p className="colophon">
-        Built by Vishantkumar Bhavsar with Python, Kafka, Spark Structured Streaming, PostgreSQL with TimescaleDB,
+        Built by Vishantkumar Bhavsar with Python, Kafka, Spark Structured Streaming and Spark SQL, Hadoop HDFS,
+        Hive, PostgreSQL with TimescaleDB,
         FastAPI, Redis and React. Market data from the Coinbase public feed; not financial advice.
       </p>
     </main>
