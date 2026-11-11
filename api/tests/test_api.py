@@ -222,7 +222,7 @@ def test_numbers_are_json_numbers_not_strings(client):
                 return
             raise AssertionError(f"{path} is a number sent as a string: {value!r}")
 
-    for path in ["/api/overview", "/api/pipeline", "/api/candles", "/api/trades/recent", "/api/pairs"]:
+    for path in ["/api/overview", "/api/pipeline", "/api/candles", "/api/trades/recent", "/api/pairs", "/api/analytics"]:
         redis.Redis.from_url(REDIS_URL).flushdb()
         check(client.get(path).json(), path)  # straight from the database
         check(client.get(path).json(), path)  # from the Redis cache
@@ -238,3 +238,38 @@ def test_replayed_trades_are_left_out_of_latency(client):
     redis.Redis.from_url(REDIS_URL).delete("cache:pipeline")
     latency = client.get("/api/pipeline").json()["latency"]
     assert latency["p99_ms"] < 1000  # the 50-second-old replayed trade is not counted
+
+
+def test_analytics_from_the_nightly_batch(client):
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("DELETE FROM analytics_daily; DELETE FROM analytics_hourly; DELETE FROM analytics_correlation; DELETE FROM batch_runs")
+        conn.execute(
+            """INSERT INTO analytics_daily (dt, pair_id, open, high, low, close, return_pct, range_pct, realized_vol_pct,
+                   volume, notional_usd, vwap, trades, buy_volume_pct, largest_trade_usd, active_minutes)
+               SELECT d::date, pair_id, 100, 110, 90, 105, 5, 20, 1.5, 10, 1000, 101, 50, 55, 300, 1200
+               FROM pairs, (VALUES ('2026-11-09'), ('2026-11-10')) v(d) WHERE symbol IN ('BTC-USD', 'ETH-USD')"""
+        )
+        conn.execute(
+            """INSERT INTO analytics_hourly (dt, hour, pair_id, trades, volume, notional_usd, volatility_pct)
+               SELECT '2026-11-10', h, pair_id, 10, 1, CASE WHEN h = 14 THEN 300 ELSE 100 END, 0.1
+               FROM pairs, generate_series(0, 1) g(x), (VALUES (14), (15)) v(h) WHERE symbol = 'BTC-USD' AND x = 0"""
+        )
+        conn.execute(
+            """INSERT INTO analytics_correlation (dt, pair_a, pair_b, correlation, minutes)
+               SELECT '2026-11-10', a.pair_id, b.pair_id, 0.8, 1300 FROM pairs a, pairs b
+               WHERE a.symbol = 'BTC-USD' AND b.symbol = 'ETH-USD'"""
+        )
+        conn.execute(
+            """INSERT INTO batch_runs (job, dt, started_at, finished_at, status, rows_hdfs, rows_db, files_before, files_after, details)
+               VALUES ('daily', '2026-11-10', now(), now(), 'ok', 3513, 3513, 65, 5, '{"seconds": 13.4}')"""
+        )
+    body = client.get("/api/analytics", params={"days": 1}).json()
+    assert body["latest_dt"] == "2026-11-10"
+    assert {(d["dt"], d["symbol"]) for d in body["daily"]} == {("2026-11-10", "BTC-USD"), ("2026-11-10", "ETH-USD")}
+    shares = {h["hour"]: h["share_pct"] for h in body["hourly"]}
+    assert shares == {14: 75.0, 15: 25.0}  # share of the pair's traded value in each hour
+    assert body["correlation"] == [{"pair_a": "BTC-USD", "pair_b": "ETH-USD", "correlation": 0.8, "minutes": 1300}]
+    run = body["runs"][0]
+    assert (run["status"], run["rows_hdfs"], run["rows_db"], run["files_before"], run["files_after"]) == ("ok", 3513, 3513, 65, 5)
+    assert run["seconds"] == 13.4
+    assert client.get("/api/analytics", params={"days": 2}).json()["daily"].__len__() == 4

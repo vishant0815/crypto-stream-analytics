@@ -1,5 +1,21 @@
 name: crypto-stream-analytics
 
+# Shared settings for the HDFS containers. The apache/hadoop image turns
+# variables named FILE.XML_property into Hadoop configuration files.
+x-hadoop-env: &hadoop-env
+  CORE-SITE.XML_fs.defaultFS: hdfs://namenode:8020
+  HDFS-SITE.XML_dfs.namenode.rpc-address: namenode:8020
+  HDFS-SITE.XML_dfs.namenode.name.dir: /data/namenode
+  HDFS-SITE.XML_dfs.datanode.data.dir: /data/datanode
+  HDFS-SITE.XML_dfs.replication: "1"            # one DataNode, so one copy of each block
+  HDFS-SITE.XML_dfs.permissions.enabled: "false"
+
+# Shared settings for the Spark jobs that use HDFS and Hive
+x-spark-lake-env: &spark-lake-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+  DATABASE_URL: postgresql://${POSTGRES_USER:-crypto}:${POSTGRES_PASSWORD:-crypto}@timescaledb:5432/${POSTGRES_DB:-crypto}
+  HDFS_ROOT: hdfs://namenode:8020
+
 services:
   kafka:
     image: apache/kafka:3.9.1
@@ -185,7 +201,79 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  namenode:
+    image: apache/hadoop:3.4.2
+    container_name: namenode
+    hostname: namenode
+    command: ["hdfs", "namenode"]
+    ports:
+      - "9870:9870"   # HDFS web UI: browse the archive at Utilities > Browse the file system
+    environment:
+      <<: *hadoop-env
+      ENSURE_NAMENODE_DIR: /data/namenode   # format HDFS on first start only
+    volumes:
+      - namenode-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9870/ > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  datanode:
+    image: apache/hadoop:3.4.2
+    container_name: datanode
+    hostname: datanode
+    command: ["hdfs", "datanode"]
+    environment:
+      <<: *hadoop-env
+    volumes:
+      - datanode-data:/data
+    depends_on:
+      namenode:
+        condition: service_healthy
+    restart: unless-stopped
+
+  spark-archive:
+    build: ../spark
+    container_name: spark-archive
+    command: ["lake.archive_job"]
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      <<: *spark-lake-env
+    stop_grace_period: 30s
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      datanode:
+        condition: service_started
+    restart: unless-stopped
+
+  spark-batch:
+    build: ../spark
+    container_name: spark-batch
+    command: ["lake.scheduler"]   # nightly at BATCH_TIME_UTC, plus catch-up of missed days
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      <<: *spark-lake-env
+    stop_grace_period: 30s
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      datanode:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   kafka-data:
   timescale-data:
   spark-checkpoints:
+  namenode-data:
+  datanode-data:

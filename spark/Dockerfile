@@ -17,6 +17,8 @@ RUN pip install --no-cache-dir "psycopg[binary]==3.3.6"
 
 WORKDIR /opt/app
 COPY streaming ./streaming
+COPY lake ./lake
+COPY --chmod=755 run.sh ./run.sh
 ENV PYTHONPATH=/opt/app
 
 # Checkpoints live on a volume so the job resumes after a restart
@@ -27,7 +29,8 @@ ENV SPARK_DRIVER_MEMORY=1g
 
 USER spark
 
-# Python runs as the main process (PID 1) and starts Spark's JVM itself.
-# `docker stop` then reaches the job's own signal handler, which stops the
-# streaming queries cleanly before Spark shuts down.
-CMD ["sh", "-c", "export PYTHONPATH=\"$(ls /opt/spark/python/lib/*.zip | tr '\\n' ':')$PYTHONPATH\"; exec python3 -m streaming.candles_job"]
+# One image, three services: the command picks the job (see docker-compose.yml).
+# run.sh execs Python as the main process and Python starts Spark's JVM, so
+# `docker stop` reaches the job's own signal handler and it stops cleanly.
+ENTRYPOINT ["/opt/app/run.sh"]
+CMD ["streaming.candles_job"]

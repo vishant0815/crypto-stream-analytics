@@ -183,3 +183,72 @@ class Database:
             "freshness": freshness[0],
             "storage": storage,
         }
+
+    # -------------------------------------------------------------- analytics
+
+    async def analytics(self, days: int) -> dict[str, Any]:
+        """Results of the nightly Spark batch job (computed from the HDFS archive)."""
+        latest = await self.fetch("SELECT max(dt) AS dt FROM analytics_daily")
+        latest_dt = latest[0]["dt"]
+        if latest_dt is None:
+            return {"latest_dt": None, "days": days, "daily": [], "hourly": [], "correlation": [], "runs": await self.batch_runs()}
+        params = {"latest": latest_dt, "days": days}
+        daily = await self.fetch(
+            """
+            SELECT a.dt::text AS dt, p.symbol, a.close::float8, a.return_pct, a.range_pct, a.realized_vol_pct,
+                   a.notional_usd::float8, a.trades, a.buy_volume_pct, a.largest_trade_usd::float8, a.active_minutes
+            FROM analytics_daily a JOIN pairs p USING (pair_id)
+            WHERE a.dt > %(latest)s::date - %(days)s
+            ORDER BY a.dt, p.pair_id
+            """,
+            params,
+        )
+        hourly = await self.fetch(
+            """
+            -- Share of each pair's traded value that falls in each UTC hour, over the window
+            SELECT p.symbol, h.hour,
+                   (100 * sum(h.notional_usd) / NULLIF(sum(sum(h.notional_usd)) OVER (PARTITION BY h.pair_id), 0))::float8 AS share_pct,
+                   sum(h.trades)::int AS trades,
+                   avg(h.volatility_pct) AS volatility_pct
+            FROM analytics_hourly h JOIN pairs p USING (pair_id)
+            WHERE h.dt > %(latest)s::date - %(days)s
+            GROUP BY p.symbol, p.pair_id, h.pair_id, h.hour
+            ORDER BY p.pair_id, h.hour
+            """,
+            params,
+        )
+        correlation = await self.fetch(
+            """
+            SELECT pa.symbol AS pair_a, pb.symbol AS pair_b, c.correlation, c.minutes
+            FROM analytics_correlation c
+            JOIN pairs pa ON pa.pair_id = c.pair_a
+            JOIN pairs pb ON pb.pair_id = c.pair_b
+            WHERE c.dt = %(latest)s
+            ORDER BY pa.pair_id, pb.pair_id
+            """,
+            params,
+        )
+        return {
+            "latest_dt": latest_dt.isoformat(),
+            "days": days,
+            "daily": daily,
+            "hourly": hourly,
+            "correlation": correlation,
+            "runs": await self.batch_runs(),
+        }
+
+    async def batch_runs(self, limit: int = 10) -> list[dict[str, Any]]:
+        return await self.fetch(
+            """
+            SELECT run_id, dt::text AS dt, status, rows_hdfs, rows_db, files_before, files_after,
+                   extract(epoch FROM started_at)::float8 AS started_at,
+                   extract(epoch FROM finished_at)::float8 AS finished_at,
+                   (details->>'seconds')::float8 AS seconds,
+                   coalesce((details->>'partial_day')::boolean, false) AS partial_day,
+                   details->>'error' AS error
+            FROM batch_runs
+            ORDER BY started_at DESC
+            LIMIT %(limit)s
+            """,
+            {"limit": limit},
+        )

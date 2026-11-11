@@ -15,6 +15,12 @@
   --down-soft: rgba(200, 68, 58, 0.14);
   --sma15: #2a78d6;        /* categorical slot 1 */
   --sma60: #eb6834;        /* categorical slot 2 */
+  --seq-low: #f3f6fa;      /* heatmap: near zero recedes to the panel */
+  --seq-high: #104281;     /* heatmap: blue step 650 */
+  --div-neg: #b5394f;      /* correlation -1 */
+  --div-mid: #f0efec;      /* correlation 0: neutral grey */
+  --div-pos: #1c5cab;      /* correlation +1: blue step 550 */
+  --heat-ink-strong: #ffffff;
 
   --font: 'IBM Plex Sans', system-ui, sans-serif;
   --font-cond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
@@ -48,6 +54,12 @@
     --down-soft: rgba(226, 101, 91, 0.16);
     --sma15: #3987e5;
     --sma60: #d95926;
+    --seq-low: #182231;
+    --seq-high: #9ec5f4;
+    --div-neg: #e0707f;
+    --div-mid: #383835;
+    --div-pos: #86b6ef;
+    --heat-ink-strong: #0e151f;
   }
 }
 :root[data-theme='dark'] {
@@ -66,6 +78,12 @@
   --down-soft: rgba(226, 101, 91, 0.16);
   --sma15: #3987e5;
   --sma60: #d95926;
+  --seq-low: #182231;
+  --seq-high: #9ec5f4;
+  --div-neg: #e0707f;
+  --div-mid: #383835;
+  --div-pos: #86b6ef;
+  --heat-ink-strong: #0e151f;
 }
 
 /* ------------------------------------------------------------------- base */
@@ -308,6 +326,40 @@ a { color: var(--accent); }
   font-size: var(--t-xs); padding: 4px 8px; border-radius: 6px; white-space: nowrap; transform: translate(-50%, -110%);
 }
 
+/* ------------------------------------------------- history (nightly batch) */
+.history { margin-top: 36px; padding-top: 22px; border-top: 1px solid var(--ink); }
+.history-head { max-width: 80ch; }
+.history h2 { margin: 0 0 4px; font-size: var(--t-lg); font-weight: 600; }
+.history h3 { margin: 0 0 10px; font-size: var(--t-md); font-weight: 600; }
+.history .lede { margin: 0 0 8px; font-size: var(--t-sm); color: var(--ink-2); }
+.history .lede strong { color: var(--ink); font-weight: 600; }
+.history .lede strong.down { color: var(--down); }
+.history-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 28px var(--gap);
+  margin-top: 18px;
+}
+.history-hours { grid-column: 1 / -1; }
+.data-table { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
+.data-table th, .data-table td { padding: 6px 0 6px 12px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.data-table thead th { font-weight: 500; color: var(--ink-2); }
+.data-table th:first-child { text-align: left; padding-left: 0; }
+.data-table tbody th { font-weight: 600; }
+.heat-wrap, .table-scroll { overflow-x: auto; }
+.heat { border-collapse: separate; border-spacing: 2px; font-size: var(--t-xs); }
+.heat th { font-weight: 500; color: var(--ink-2); padding: 0 6px 0 0; text-align: left; white-space: nowrap; }
+.heat thead th { text-align: center; padding: 0 0 4px; }
+.heat td { border-radius: 3px; }
+.corr td { width: 58px; height: 40px; text-align: center; font-weight: 600; font-size: var(--t-sm); background: var(--panel); }
+.corr td.diag { background: repeating-linear-gradient(135deg, var(--rule) 0 2px, transparent 2px 6px); }
+.hourly { width: 100%; table-layout: fixed; }
+.hourly th[scope='row'] { width: 48px; }
+.hourly td { height: 26px; background: var(--seq-low); }
+.heat-scale { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--t-xs); color: var(--ink-2); }
+.heat-ramp { width: 120px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, var(--seq-low), var(--seq-high)); border: 1px solid var(--rule); }
+.heat-note { margin: 6px 0 0; font-size: var(--t-xs); color: var(--ink-2); min-height: 1.5em; }
+
 .colophon { margin-top: 36px; font-size: var(--t-sm); color: var(--ink-2); max-width: 80ch; }
 
 /* ------------------------------------------------------------- responsive */
@@ -316,6 +368,7 @@ a { color: var(--accent); }
   .side { grid-template-columns: 1fr 1fr; }
   .details { grid-template-columns: 1fr 1fr; }
   .details > :first-child { grid-column: 1 / -1; }
+  .history-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
   .page { padding: 18px 16px 36px; }

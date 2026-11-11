@@ -2,7 +2,7 @@
 
 Real-time crypto market analytics pipeline. Live trades from the Coinbase public WebSocket are streamed through **Apache Kafka** and **Spark Structured Streaming** into **TimescaleDB** and **HDFS/Hive**, scored by a **Spark MLlib** anomaly-detection model, and shown on a **React** dashboard that updates every second.
 
-> Status: in development. Live dashboard, API, stream processing and storage are working; HDFS/Hive and the ML model are next.
+> Status: in development. Live dashboard, API, stream processing, storage, the HDFS/Hive data lake and the nightly batch are working; the ML model is next.
 
 ![Live dashboard](docs/dashboard.png)
 
@@ -47,7 +47,7 @@ Coinbase WebSocket ──► Ingestion (Python) ──► Kafka
 | Streaming | Apache Kafka |
 | Processing | Spark Structured Streaming, Spark SQL |
 | Machine learning | Spark MLlib |
-| Data lake | Hadoop HDFS, Parquet, Hive |
+| Data lake | Hadoop HDFS, Parquet, Hive metastore (on PostgreSQL), Spark SQL batch |
 | Database | PostgreSQL + TimescaleDB, Redis |
 | Backend | FastAPI (REST + WebSockets) |
 | Frontend | React, TradingView lightweight-charts, served by nginx |
@@ -76,15 +76,20 @@ docker logs -f spark-streaming  # input rate, batch time, state size, watermark
 - API docs: http://localhost:8000/docs
 - Kafka UI: http://localhost:8080 (messages arriving in `raw.trades`, `raw.ticker` and `agg.metrics`)
 - Spark UI: http://localhost:4040 (Structured Streaming tab: query progress and batch durations)
+- HDFS UI: http://localhost:9870 (Utilities > Browse the file system > `/data/raw/trades`)
 - Database: `psql postgresql://crypto:crypto@localhost:5432/crypto`
 
-Indicators need 15 minutes of continuous data before they appear, and the 60-minute average needs an hour.
+Indicators need 15 minutes of continuous data before they appear, and the 60-minute average needs an hour. The data-lake history fills in after the first nightly run (00:30 UTC) for a day the archive covered.
+
+The whole stack runs 14 containers, three of them Spark, so give Docker Desktop at least 8 GB of memory.
 
 Already ran an earlier version? The schema only runs automatically on an empty database, so apply any migrations you don't have yet, in order:
 
 ```bash
 psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/002_candles_and_indicators.sql
 psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/003_trade_replay_flag.sql
+psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/004_batch_analytics.sql
+psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/005_hive_metastore_schema.sql
 ```
 
 **Run the dashboard in development** (hot reload, talks to the API on port 8000):
@@ -180,6 +185,7 @@ The FastAPI service reads Kafka (`raw.ticker`, `raw.trades`, `agg.metrics`) and 
 | `GET /api/trades/recent?pair=BTC-USD&limit=40` | Latest trades, newest first |
 | `GET /api/pipeline` | Ingestion latency percentiles, trades per minute, data freshness, storage, live message rates |
 | `GET /api/pairs`, `GET /api/health` | Pairs; status of database, Redis and Kafka |
+| `GET /api/analytics?days=14` | Nightly batch results: per-pair daily summary, hourly activity, correlations, and the last runs with their reconciliation |
 | `WS /ws/live?pairs=BTC-USD,ETH-USD` | A snapshot, then about one update per second |
 
 - **Redis** caches database responses for 2 seconds, so the database sees at most one query per endpoint every 2 seconds however many people are watching, and holds the latest live state so a new browser gets prices immediately. If Redis is down, requests go straight to the database.
@@ -188,6 +194,33 @@ The FastAPI service reads Kafka (`raw.ticker`, `raw.trades`, `agg.metrics`) and 
 - The dashboard (React and TradingView's lightweight-charts) loads history once and then only applies pushed updates; 5m and 1h bars are rebuilt live from the 1-minute candles.
 - In Docker, nginx serves the dashboard and forwards `/api` and `/ws` to the API, so the browser talks to one origin.
 - Coinbase replays a batch of recent trades every time a client connects. They're flagged as `is_replay`, still counted in candles, and left out of the latency figures.
+
+### Data lake: HDFS, Hive and the nightly batch
+
+The streaming path keeps 30 days in TimescaleDB; the data lake keeps **every trade, forever**, on HDFS.
+
+**Archive** (`spark-archive`, Spark Structured Streaming): every 5 minutes, all new trades from `raw.trades` are appended as Parquet under `/data/raw/trades/dt=YYYY-MM-DD/pair=XXX-USD/`, exactly as received, with their Kafka partition and offset for lineage. Each batch registers any new partitions in Hive straight away, so the data can be queried within minutes. A marker file per micro-batch stops a batch that is re-run after a crash from being written twice.
+
+**Hive tables** (database `crypto`): `raw_trades` (partitioned by day and pair), and the batch outputs `daily_summary`, `hourly_profile` and `pair_correlation` (partitioned by day). All are external Parquet tables on HDFS. The metastore is Hive 2.3, matching Spark's built-in client, stored in the `hive_metastore` schema of the same PostgreSQL database. Its schema is created by Hive's official script (`db/migrations/005_hive_metastore_schema.sql`) rather than on the fly, because letting DataNucleus create it lazily deadlocks on PostgreSQL.
+
+**Nightly batch** (`spark-batch`, Spark SQL), at 00:30 UTC for the day before:
+
+1. **De-duplicate**: one row per trade, keeping the live copy over Coinbase's reconnect replays.
+2. **Compact**: about 1,400 small files per day become one file per pair. The new files are written to a staging folder and swapped in with HDFS renames, and a file the archive writes into the old folder mid-swap is kept, not deleted.
+3. **Compute**: daily summary (OHLC, return, range, realized volatility from 1-minute log returns, VWAP, traded value, buy share), activity by UTC hour, and Pearson correlation of 1-minute returns between every pair of coins.
+4. **Store**: `INSERT OVERWRITE` of the day's partition in Hive, and the same rows into TimescaleDB for the dashboard, in one transaction.
+5. **Reconcile**: count the day's trades in HDFS and in TimescaleDB, pair by pair, and log the run in `batch_runs` as `ok` or `mismatch`.
+
+Every step can be repeated: running a day again gives the same result. On start, the scheduler catches up any of the last 7 days that has no finished run.
+
+```bash
+# Run the batch for one day by hand
+docker compose -f docker/docker-compose.yml exec spark-batch /opt/app/run.sh lake.batch_job --date 2026-11-10
+
+# Query the Hive tables with Spark SQL
+docker compose -f docker/docker-compose.yml exec spark-batch /opt/app/run.sh lake.query \
+  "SELECT pair, count(*) AS trades FROM crypto.raw_trades WHERE dt = '2026-11-10' GROUP BY pair"
+```
 
 ## Project structure
 
@@ -199,11 +232,11 @@ crypto-stream-analytics/
 ├── dashboard/          # React dashboard, served by nginx in Docker
 ├── spark/
 │   ├── streaming/      # candles and indicators job (Structured Streaming)
-│   └── tests/          # unit tests for the candle and indicator logic
+│   ├── lake/           # HDFS archive job, nightly batch, scheduler, Hive tables
+│   └── tests/          # unit tests for streaming and batch logic
 ├── db/
 │   ├── migrations/     # schema, hypertables, policies
 │   └── queries/        # analysis queries
-├── hive/               # external table definitions
 ├── notebooks/          # exploratory data analysis
 ├── docker/             # Dockerfiles and docker-compose.yml
 └── .github/workflows/  # CI
@@ -215,7 +248,7 @@ crypto-stream-analytics/
 - [x] TimescaleDB schema and first queries
 - [x] Spark streaming: candles and indicators
 - [x] FastAPI and live dashboard
-- [ ] HDFS archive, Hive tables, batch analytics
+- [x] HDFS archive, Hive tables, batch analytics
 - [ ] ML anomaly detection and live scoring
 - [ ] Pipeline monitoring, tests and CI
 
