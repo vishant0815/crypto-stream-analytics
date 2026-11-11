@@ -1,12 +1,16 @@
 """Integration tests against a real TimescaleDB.
 
-Skipped unless TEST_DATABASE_URL points at a database with db/migrations applied, e.g.
-  TEST_DATABASE_URL=postgresql://crypto:crypto@localhost:5432/crypto pytest
+These tests EMPTY the trades and ticker tables, so they only run against a
+separate database whose name ends in "_test", never the real one:
+
+  createdb crypto_test   (then apply db/migrations/*.sql to it)
+  TEST_DATABASE_URL=postgresql://crypto:crypto@localhost:5432/crypto_test pytest
 """
 
 import os
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from urllib.parse import urlparse
 
 import psycopg
 import pytest
@@ -16,6 +20,12 @@ from app.mapping import TickerRow, TradeRow
 
 URL = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not URL, reason="TEST_DATABASE_URL not set")
+
+if URL and not urlparse(URL).path.rstrip("/").endswith("_test"):
+    raise RuntimeError(
+        f"TEST_DATABASE_URL must point at a database whose name ends in '_test' "
+        f"(these tests delete data); got {urlparse(URL).path!r}"
+    )
 
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
 
@@ -86,3 +96,12 @@ def test_writes_work_again_after_reconnect(db):
     db.connect()  # e.g. after the database restarted
     result = db.write([trade(2, seconds=1)], [])
     assert result.trades_inserted == 1
+
+
+def test_replay_flag_is_stored(db):
+    from dataclasses import replace
+
+    db.write([trade(1), replace(trade(2, seconds=1), is_replay=True)], [])
+    with psycopg.connect(URL) as conn:
+        rows = conn.execute("SELECT trade_id, is_replay FROM trades ORDER BY trade_id").fetchall()
+    assert rows == [(1, False), (2, True)]

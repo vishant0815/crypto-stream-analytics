@@ -112,3 +112,9 @@ def test_heartbeats_are_ignored():
     sink, stats = FakeSink(), Stats()
     route({"channel": "heartbeats", "events": []}, sink, stats)
     assert sink.messages == []
+
+
+def test_snapshot_trades_are_marked_as_replay():
+    snapshot = {**TRADES_MESSAGE, "events": [{**TRADES_MESSAGE["events"][0], "type": "snapshot"}]}
+    assert parse_market_trades(snapshot).events[0].replay is True
+    assert parse_market_trades(TRADES_MESSAGE).events[0].replay is False

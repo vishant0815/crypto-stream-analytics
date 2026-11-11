@@ -15,3 +15,6 @@ venv/
 
 # Node (dashboard, later)
 node_modules/
+
+# Dashboard build output
+dashboard/dist/

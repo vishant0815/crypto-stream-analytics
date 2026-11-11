@@ -16,7 +16,7 @@ from app.mapping import TickerRow, TradeRow
 
 log = logging.getLogger(__name__)
 
-TRADE_COLUMNS = "time, pair_id, trade_id, price, size, side, ingest_time"
+TRADE_COLUMNS = "time, pair_id, trade_id, price, size, side, ingest_time, is_replay"
 TICKER_COLUMNS = (
     "time, pair_id, price, volume_24h, high_24h, low_24h, "
     "price_pct_chg_24h, best_bid, best_ask, ingest_time"
@@ -110,7 +110,7 @@ class Database:
         ids = {s: self._pair_id(cur, s) for s in {r.symbol for r in rows}}
         with cur.copy(f"COPY trades_stage ({TRADE_COLUMNS}) FROM STDIN") as copy:
             for r in rows:
-                copy.write_row((r.time, ids[r.symbol], r.trade_id, r.price, r.size, r.side, r.ingest_time))
+                copy.write_row((r.time, ids[r.symbol], r.trade_id, r.price, r.size, r.side, r.ingest_time, r.is_replay))
         cur.execute(
             f"INSERT INTO trades ({TRADE_COLUMNS}) SELECT {TRADE_COLUMNS} FROM trades_stage "
             "ON CONFLICT DO NOTHING"

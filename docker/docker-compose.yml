@@ -138,6 +138,53 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  redis:
+    image: redis:8.2.1-alpine
+    container_name: redis
+    # Cache and latest live state only: nothing here needs to survive a restart
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ../api
+    container_name: api
+    ports:
+      - "8000:8000"   # REST API and docs at http://localhost:8000/docs
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      DATABASE_URL: postgresql://${POSTGRES_USER:-crypto}:${POSTGRES_PASSWORD:-crypto}@timescaledb:5432/${POSTGRES_DB:-crypto}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/pairs', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  dashboard:
+    build: ../dashboard
+    container_name: dashboard
+    ports:
+      - "3000:80"     # the live dashboard: http://localhost:3000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   kafka-data:
   timescale-data:
