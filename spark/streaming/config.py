@@ -10,6 +10,9 @@ class Settings:
     kafka_bootstrap_servers: str = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
     topic_trades: str = os.getenv("TOPIC_TRADES", "raw.trades")
     topic_metrics: str = os.getenv("TOPIC_METRICS", "agg.metrics")
+    topic_alerts: str = os.getenv("TOPIC_ALERTS", "alerts")
+    # How often the live job checks the model registry for a newly trained model
+    model_refresh_s: float = float(os.getenv("MODEL_REFRESH_S", "600"))
 
     database_url: str = os.getenv("DATABASE_URL", "postgresql://crypto:crypto@localhost:5432/crypto")
 

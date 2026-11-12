@@ -33,9 +33,13 @@ from pyspark.sql import functions as F
 from pyspark.sql.streaming import StreamingQueryListener
 
 from streaming.config import settings
+from ml.features import minute_features
+from streaming.scoring import LiveScorer
 from streaming.sinks import (
+    ISO_UTC,
     publish,
     read_candle_history,
+    upsert_alerts,
     upsert_candles,
     upsert_indicators,
 )
@@ -103,6 +107,9 @@ def read_trades(spark: SparkSession) -> DataFrame:
 # Micro-batch handlers
 # --------------------------------------------------------------------------
 
+SCORER = LiveScorer()
+
+
 def write_live_candles(candles: DataFrame, batch_id: int) -> None:
     candles.persist()
     try:
@@ -134,19 +141,42 @@ def write_indicators(closed: DataFrame, batch_id: int) -> None:
             bounds["hi"].strftime("%Y-%m-%dT%H:%M:%S+00:00"),
         )
 
-        cols = ["bucket", "pair", "close", "volume", "vwap"]
+        cols = ["bucket", "pair", "open", "high", "low", "close", "volume", "vwap", "trade_count", "buy_volume"]
         keys = closed.select("pair", "bucket")
         # History from the database, minus the candles this batch is about to replace
-        combined = history.join(keys, ["pair", "bucket"], "left_anti").select(cols).unionByName(closed.select(cols))
-
-        indicators = compute_indicators(combined).join(keys, ["pair", "bucket"], "left_semi")
-        indicators.persist()
+        combined = (
+            history.join(keys, ["pair", "bucket"], "left_anti").select(cols)
+            .unionByName(closed.select(cols))
+            .persist()
+        )
         try:
-            upsert_indicators(indicators)
-            publish(indicators, "indicators")
-            log.info("indicators: batch %d, %d closed candles", batch_id, indicators.count())
+            indicators = compute_indicators(combined).join(keys, ["pair", "bucket"], "left_semi").persist()
+            try:
+                upsert_indicators(indicators)
+                publish(indicators, "indicators")
+                n_closed = indicators.count()
+            finally:
+                indicators.unpersist()
+
+            # Anomaly scoring: the same features the model was trained on, for the closed minutes
+            features = minute_features(combined).join(keys, ["pair", "bucket"], "left_semi")
+            alerts_df = SCORER.score(features).persist()
+            try:
+                alerts = [
+                    r.asDict()
+                    for r in alerts_df.withColumn("bucket_iso", F.date_format("bucket", ISO_UTC)).collect()
+                ]
+                if alerts:
+                    upsert_alerts(alerts)
+                    publish(alerts_df, "alert", settings.topic_alerts)
+                    for a in alerts:
+                        log.info("ALERT %s %s %s score %.2f (driver %s, %s)", a["pair"], a["bucket_iso"],
+                                 a["alert_type"], a["score"], a["driver"], a["model_ver"])
+            finally:
+                alerts_df.unpersist()
+            log.info("indicators: batch %d, %d closed candles, %d alerts (%s)", batch_id, n_closed, len(alerts), SCORER.version)
         finally:
-            indicators.unpersist()
+            combined.unpersist()
     finally:
         closed.unpersist()
 

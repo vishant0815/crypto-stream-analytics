@@ -222,7 +222,8 @@ def test_numbers_are_json_numbers_not_strings(client):
                 return
             raise AssertionError(f"{path} is a number sent as a string: {value!r}")
 
-    for path in ["/api/overview", "/api/pipeline", "/api/candles", "/api/trades/recent", "/api/pairs", "/api/analytics"]:
+    for path in ["/api/overview", "/api/pipeline", "/api/candles", "/api/trades/recent", "/api/pairs", "/api/analytics",
+                 "/api/alerts", "/api/model"]:
         redis.Redis.from_url(REDIS_URL).flushdb()
         check(client.get(path).json(), path)  # straight from the database
         check(client.get(path).json(), path)  # from the Redis cache
@@ -273,3 +274,42 @@ def test_analytics_from_the_nightly_batch(client):
     assert (run["status"], run["rows_hdfs"], run["rows_db"], run["files_before"], run["files_after"]) == ("ok", 3513, 3513, 65, 5)
     assert run["seconds"] == 13.4
     assert client.get("/api/analytics", params={"days": 2}).json()["daily"].__len__() == 4
+
+
+def test_alerts_and_model_endpoints(client):
+    with psycopg.connect(DB_URL) as conn:
+        conn.execute("DELETE FROM alerts; DELETE FROM model_registry")
+        conn.execute(
+            """INSERT INTO alerts (time, pair_id, alert_type, score, details, model_ver)
+               SELECT now() - make_interval(mins => m), pair_id, t, s,
+                      jsonb_build_object('driver', d, 'features', jsonb_build_object('log_volume_ratio', 3.4)), 'rules-v1'
+               FROM pairs, (VALUES (2, 'VOLUME_SPIKE', 2.5, 'log_volume_ratio'), (9, 'PRICE_JUMP', 1.4, 'abs_ret_z')) v(m, t, s, d)
+               WHERE symbol = 'SOL-USD'"""
+        )
+    redis.Redis.from_url(REDIS_URL).flushdb()
+    got = client.get("/api/alerts").json()
+    assert [a["alert_type"] for a in got] == ["VOLUME_SPIKE", "PRICE_JUMP"]  # newest first
+    assert got[0]["symbol"] == "SOL-USD" and got[0]["driver"] == "log_volume_ratio"
+    assert got[0]["features"]["log_volume_ratio"] == 3.4
+    assert client.get("/api/alerts", params={"pair": "BTC-USD"}).json() == []
+    assert client.get("/api/alerts", params={"pair": "bad"}).status_code == 422
+
+    body = client.get("/api/model").json()
+    assert body["mode"] == "rules" and body["model"] is None
+    assert (body["alerts_24h"], body["volume_spikes_24h"], body["price_jumps_24h"]) == (2, 1, 1)
+
+
+def test_alerts_are_pushed_over_the_websocket(client):
+    wait_for_kafka(client)
+    with client.websocket_connect("/ws/live?pairs=TS6-USD") as ws:
+        ws.receive_text()
+        minute = time.strftime("%Y-%m-%dT%H:%M:00.000000Z", time.gmtime())
+        p = Producer({"bootstrap.servers": settings.kafka_bootstrap_servers, "compression.type": "lz4"})
+        p.produce(settings.topic_alerts, key="TS6-USD", value=json.dumps(
+            {"type": "alert", "pair": "TS6-USD", "bucket": minute, "alert_type": "VOLUME_SPIKE", "score": 4.2,
+             "driver": "log_volume_ratio", "model_ver": "kmeans-test", "log_volume_ratio": 3.1, "abs_ret_z": 0.4}))
+        p.flush(10)
+        msg = receive_until(ws, lambda m: m["type"] == "update" and "alerts" in m["pairs"].get("TS6-USD", {}))
+    alert = msg["pairs"]["TS6-USD"]["alerts"][0]
+    assert (alert["alert_type"], alert["score"], alert["model_ver"]) == ("VOLUME_SPIKE", 4.2, "kmeans-test")
+    assert alert["features"] == {"log_volume_ratio": 3.1, "abs_ret_z": 0.4}

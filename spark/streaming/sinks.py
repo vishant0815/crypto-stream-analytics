@@ -114,8 +114,8 @@ def upsert_indicators(indicators: DataFrame) -> None:
     _upsert(indicators, INDICATOR_UPSERT, INDICATOR_COLUMNS)
 
 
-def publish(df: DataFrame, message_type: str) -> None:
-    """Send each row to agg.metrics as JSON, keyed by pair.
+def publish(df: DataFrame, message_type: str, topic: str | None = None) -> None:
+    """Send each row to agg.metrics (or another topic) as JSON, keyed by pair.
 
     Decimals become plain JSON numbers here, because these messages feed the
     dashboard, which only needs display precision.
@@ -135,9 +135,43 @@ def publish(df: DataFrame, message_type: str) -> None:
         )
         .write.format("kafka")
         .option("kafka.bootstrap.servers", settings.kafka_bootstrap_servers)
-        .option("topic", settings.topic_metrics)
+        .option("topic", topic or settings.topic_metrics)
         .save()
     )
+
+
+HISTORY_SCHEMA = (
+    "bucket timestamp, pair string, open decimal(20,10), high decimal(20,10), low decimal(20,10), "
+    "close decimal(20,10), volume decimal(28,12), vwap decimal(20,10), trade_count int, buy_volume decimal(28,12)"
+)
+
+ALERT_UPSERT = """
+    INSERT INTO alerts (time, pair_id, alert_type, score, details, model_ver)
+    SELECT %s, p.pair_id, %s, %s, %s, %s FROM pairs p WHERE p.symbol = %s
+    ON CONFLICT (pair_id, time) DO UPDATE SET
+        alert_type = EXCLUDED.alert_type, score = EXCLUDED.score,
+        details = EXCLUDED.details, model_ver = EXCLUDED.model_ver
+"""
+
+
+def upsert_alerts(alerts: list[dict]) -> None:
+    """Write alerts (a handful per batch at most) from the driver. One per pair and minute."""
+    import json
+
+    import psycopg
+
+    from ml.features import FEATURES
+
+    rows = [
+        (
+            a["bucket_iso"], a["alert_type"], float(a["score"]),
+            json.dumps({"driver": a["driver"], "features": {f: a[f] for f in FEATURES}}),
+            a["model_ver"], a["pair"],
+        )
+        for a in alerts
+    ]
+    with psycopg.connect(settings.database_url, application_name="spark-streaming") as conn:
+        conn.cursor().executemany(ALERT_UPSERT, sorted(rows, key=lambda r: (r[-1], r[0])))
 
 
 def read_candle_history(spark: SparkSession, symbols: list[str], start_iso: str, end_iso: str) -> DataFrame:
@@ -147,10 +181,11 @@ def read_candle_history(spark: SparkSession, symbols: list[str], start_iso: str,
         raise ValueError(f"bad time range {start_iso!r} .. {end_iso!r}")
     safe = [s for s in symbols if _SYMBOL.match(s)]
     if not safe:
-        return spark.createDataFrame([], "bucket timestamp, pair string, close decimal(20,10), volume decimal(28,12), vwap decimal(20,10)")
+        return spark.createDataFrame([], HISTORY_SCHEMA)
     in_list = ", ".join(f"'{s}'" for s in safe)
     query = f"""
-        SELECT c.bucket, p.symbol AS pair, c.close, c.volume, c.vwap
+        SELECT c.bucket, p.symbol AS pair, c.open, c.high, c.low, c.close, c.volume, c.vwap,
+               c.trade_count, c.buy_volume
         FROM candles_1m c
         JOIN pairs p USING (pair_id)
         WHERE p.symbol IN ({in_list})

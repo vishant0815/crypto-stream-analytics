@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir "psycopg[binary]==3.3.6"
 WORKDIR /opt/app
 COPY streaming ./streaming
 COPY lake ./lake
+COPY ml ./ml
 COPY --chmod=755 run.sh ./run.sh
 ENV PYTHONPATH=/opt/app
 

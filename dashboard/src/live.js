@@ -53,6 +53,7 @@ export function useLive() {
   const [tickers, setTickers] = useState({})
   const [indicators, setIndicators] = useState({})
   const [lastPush, setLastPush] = useState(null) // { at: ms, pushes: n }
+  const [liveAlerts, setLiveAlerts] = useState([]) // alerts pushed since the page opened
   const listeners = useRef(new Set())
 
   useEffect(() => {
@@ -70,6 +71,8 @@ export function useLive() {
         const latestInd = v.indicators ? v.indicators[v.indicators.length - 1] : v.indicators
         if (latestInd) ind[pair] = latestInd
       }
+      const fresh = Object.values(pairs).flatMap((v) => v.alerts ?? [])
+      if (fresh.length) setLiveAlerts((prev) => [...fresh, ...prev].slice(0, 100))
       if (Object.keys(t).length) setTickers((prev) => ({ ...prev, ...t }))
       if (Object.keys(ind).length) setIndicators((prev) => ({ ...prev, ...ind }))
     }
@@ -116,7 +119,7 @@ export function useLive() {
     return () => listeners.current.delete(fn)
   }
 
-  return { status, tickers, indicators, lastPush, subscribe }
+  return { status, tickers, indicators, lastPush, liveAlerts, subscribe }
 }
 
 // Re-render every `ms` so "updated 3 s ago" style text stays current.

@@ -257,7 +257,8 @@ services:
   spark-batch:
     build: ../spark
     container_name: spark-batch
-    command: ["lake.scheduler"]   # nightly at BATCH_TIME_UTC, plus catch-up of missed days
+    # Nightly at BATCH_TIME_UTC: the day's batch, then retraining of the anomaly model
+    command: ["lake.scheduler"]
     env_file:
       - path: ../.env
         required: false

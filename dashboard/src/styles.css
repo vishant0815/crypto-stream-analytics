@@ -21,6 +21,8 @@
   --div-mid: #f0efec;      /* correlation 0: neutral grey */
   --div-pos: #1c5cab;      /* correlation +1: blue step 550 */
   --heat-ink-strong: #ffffff;
+  --alert: #a86400;         /* unusual minute: amber, with a text label */
+  --alert-soft: rgba(196, 127, 0, 0.14);
 
   --font: 'IBM Plex Sans', system-ui, sans-serif;
   --font-cond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
@@ -60,6 +62,8 @@
     --div-mid: #383835;
     --div-pos: #86b6ef;
     --heat-ink-strong: #0e151f;
+    --alert: #f0b44c;
+    --alert-soft: rgba(240, 180, 76, 0.16);
   }
 }
 :root[data-theme='dark'] {
@@ -84,6 +88,8 @@
   --div-mid: #383835;
   --div-pos: #86b6ef;
   --heat-ink-strong: #0e151f;
+  --alert: #f0b44c;
+  --alert-soft: rgba(240, 180, 76, 0.16);
 }
 
 /* ------------------------------------------------------------------- base */
@@ -325,6 +331,24 @@ a { color: var(--accent); }
   position: absolute; pointer-events: none; background: var(--ink); color: var(--surface);
   font-size: var(--t-xs); padding: 4px 8px; border-radius: 6px; white-space: nowrap; transform: translate(-50%, -110%);
 }
+
+/* ------------------------------------------------------------ alerts */
+.alerts { margin-top: 26px; }
+.alerts-head { max-width: 80ch; }
+.alerts h2 { margin: 0 0 4px; font-size: var(--t-lg); font-weight: 600; }
+.alerts .lede { margin: 0 0 10px; font-size: var(--t-sm); color: var(--ink-2); }
+.data-table.alerts-table td, .data-table.alerts-table th { text-align: left; }
+.data-table.alerts-table td:nth-child(4), .data-table.alerts-table th:nth-child(4) { text-align: right; }
+.alerts-what { white-space: normal; }
+.alert-badge {
+  display: inline-block; margin-right: 8px; padding: 1px 7px; border-radius: 4px;
+  background: var(--alert-soft); color: var(--alert); font-weight: 600; font-size: var(--t-xs);
+}
+.link-button {
+  border: 0; background: none; padding: 0; font: inherit; font-weight: 600; color: var(--ink);
+  cursor: pointer; text-decoration: underline; text-decoration-color: var(--rule); text-underline-offset: 3px;
+}
+.link-button:hover { text-decoration-color: var(--accent); }
 
 /* ------------------------------------------------- history (nightly batch) */
 .history { margin-top: 36px; padding-top: 22px; border-top: 1px solid var(--ink); }

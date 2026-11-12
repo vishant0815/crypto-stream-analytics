@@ -2,7 +2,7 @@
 
 Real-time crypto market analytics pipeline. Live trades from the Coinbase public WebSocket are streamed through **Apache Kafka** and **Spark Structured Streaming** into **TimescaleDB** and **HDFS/Hive**, scored by a **Spark MLlib** anomaly-detection model, and shown on a **React** dashboard that updates every second.
 
-> Status: in development. Live dashboard, API, stream processing, storage, the HDFS/Hive data lake and the nightly batch are working; the ML model is next.
+> Status: in development. Live dashboard, API, stream processing, storage, the HDFS/Hive data lake, the nightly batch and ML anomaly detection are working; CI and the live demo are next.
 
 ![Live dashboard](docs/dashboard.png)
 
@@ -90,6 +90,7 @@ psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/002_candl
 psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/003_trade_replay_flag.sql
 psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/004_batch_analytics.sql
 psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/005_hive_metastore_schema.sql
+psql postgresql://crypto:crypto@localhost:5432/crypto -f db/migrations/006_ml_anomaly.sql
 ```
 
 **Run the dashboard in development** (hot reload, talks to the API on port 8000):
@@ -186,7 +187,9 @@ The FastAPI service reads Kafka (`raw.ticker`, `raw.trades`, `agg.metrics`) and 
 | `GET /api/pipeline` | Ingestion latency percentiles, trades per minute, data freshness, storage, live message rates |
 | `GET /api/pairs`, `GET /api/health` | Pairs; status of database, Redis and Kafka |
 | `GET /api/analytics?days=14` | Nightly batch results: per-pair daily summary, hourly activity, correlations, and the last runs with their reconciliation |
-| `WS /ws/live?pairs=BTC-USD,ETH-USD` | A snapshot, then about one update per second |
+| `GET /api/alerts?pair=SOL-USD&limit=30` | Recent unusual minutes, newest first, with what drove each one |
+| `GET /api/model` | The active anomaly model from the registry, and alerts in the last 24 hours |
+| `WS /ws/live?pairs=BTC-USD,ETH-USD` | A snapshot, then about one update per second, including new alerts |
 
 - **Redis** caches database responses for 2 seconds, so the database sees at most one query per endpoint every 2 seconds however many people are watching, and holds the latest live state so a new browser gets prices immediately. If Redis is down, requests go straight to the database.
 - API database connections are **read-only** (`default_transaction_read_only`), with a 5-second statement timeout.
@@ -222,6 +225,33 @@ docker compose -f docker/docker-compose.yml exec spark-batch /opt/app/run.sh lak
   "SELECT pair, count(*) AS trades FROM crypto.raw_trades WHERE dt = '2026-11-10' GROUP BY pair"
 ```
 
+### Anomaly detection (Spark MLlib)
+
+Every closed minute of every pair is scored as it closes, and unusual ones become alerts on the dashboard, in the `alerts` table and on the `alerts` Kafka topic.
+
+**Features**, one row per pair and minute (`spark/ml/features.py`). Each compares the minute with the same coin's previous hour, so the features are scale-free and one model serves every pair:
+
+| Feature | Meaning |
+| --- | --- |
+| `abs_ret_z` | Size of the minute's move, in units of the past hour's typical move |
+| `range_z` | High-low range vs the past hour's average |
+| `log_volume_ratio`, `log_trades_ratio` | Volume and trade count vs the past hour's average (log) |
+| `vwap_dev_z` | How far the close ended from the minute's average price: a late jump |
+| `buy_imbalance` | 0 when buying and selling balance, 1 when it was all one side |
+
+The nightly trainer and the live job call the **same function on the same 1-minute candles** (built by the same `build_candles`), so the model scores exactly what it was trained on.
+
+**Model** (`spark/ml/model.py`): standardised features → **K-Means**, with k chosen by silhouette score. A minute's anomaly score is its distance to the nearest *normal* cluster centre (one holding at least 1% of training minutes): when several similar anomalies are in the training data, K-Means can give them a small cluster of their own, where they would look ordinary. The threshold is the 99.5th percentile of training scores, so about 1 minute in 200 is flagged. A minute is only alerted if its main driver is unusually *high*, so unusually quiet minutes don't count. Each alert names that driver, which sets its type (volume spike, price jump).
+
+**Training** (`spark/ml/train_job.py`): nightly after the batch job, on the last 30 days of the HDFS archive. The model is saved to HDFS under `/models/anomaly/<version>`, recorded in `model_registry` with its training data, k, silhouette, threshold and alert rate, and activated if it passes a sanity check. The live job checks the registry every 10 minutes and switches to a new model without a restart. Until there are 2,000 pair-minutes of history, or if a model can't be loaded, fixed rules (`rules-v1`) do the job, so alerts never stop.
+
+**Evaluation** (`spark/tests/test_ml.py`): three synthetic markets with different volatility, with price jumps and volume spikes injected into 0.3% of minutes and trained on without labels, as in production. The model catches **100% of injected anomalies with 0.07% false positives**, and labels every alert with the right type.
+
+```bash
+# Train now instead of waiting for the night
+docker compose -f docker/docker-compose.yml exec spark-batch /opt/app/run.sh ml.train_job
+```
+
 ## Project structure
 
 ```
@@ -233,6 +263,7 @@ crypto-stream-analytics/
 ├── spark/
 │   ├── streaming/      # candles and indicators job (Structured Streaming)
 │   ├── lake/           # HDFS archive job, nightly batch, scheduler, Hive tables
+│   ├── ml/             # anomaly features, K-Means model, training job, model registry
 │   └── tests/          # unit tests for streaming and batch logic
 ├── db/
 │   ├── migrations/     # schema, hypertables, policies
@@ -249,7 +280,7 @@ crypto-stream-analytics/
 - [x] Spark streaming: candles and indicators
 - [x] FastAPI and live dashboard
 - [x] HDFS archive, Hive tables, batch analytics
-- [ ] ML anomaly detection and live scoring
+- [x] ML anomaly detection and live scoring
 - [ ] Pipeline monitoring, tests and CI
 
 ## Author

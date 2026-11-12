@@ -17,6 +17,7 @@ class Settings:
     topic_trades: str = os.getenv("TOPIC_TRADES", "raw.trades")
     topic_ticker: str = os.getenv("TOPIC_TICKER", "raw.ticker")
     topic_metrics: str = os.getenv("TOPIC_METRICS", "agg.metrics")
+    topic_alerts: str = os.getenv("TOPIC_ALERTS", "alerts")
 
     # How often live updates are pushed to browsers
     push_interval_s: float = float(os.getenv("PUSH_INTERVAL_S", "1"))
