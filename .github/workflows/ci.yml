@@ -164,3 +164,10 @@ jobs:
 
       - name: Build every image
         run: docker compose -f docker/docker-compose.yml build
+
+      - name: Spark image can load every job (catches packages missing from the image)
+        run: |
+          docker compose -f docker/docker-compose.yml run --rm --no-deps --entrypoint sh spark-batch -c '
+            PYTHONPATH="$(ls /opt/spark/python/lib/*.zip | tr "\n" ":")/opt/app" python3 -c "
+          import streaming.candles_job, streaming.metrics, lake.archive_job, lake.batch_job, lake.scheduler, ml.train_job
+          print(\"all Spark jobs import\")"'
