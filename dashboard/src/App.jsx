@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { useLive, useNow, usePolling } from './live.js'
 import { formatAge } from './format.js'
+import { switchThemeWithVenom } from './venom.js'
 import PipelineBand from './components/PipelineBand.jsx'
 import TickerRow from './components/TickerRow.jsx'
 import PriceChart from './components/PriceChart.jsx'
@@ -25,20 +27,44 @@ function ThemeToggle() {
       return null
     }
   })
-  useEffect(() => {
-    if (theme) document.documentElement.dataset.theme = theme
-    else delete document.documentElement.dataset.theme
-    try {
-      if (theme) localStorage.setItem('theme', theme)
-      else localStorage.removeItem('theme')
-    } catch {
-      // storage unavailable: the choice lasts for this visit
-    }
-  }, [theme])
   const isDark = theme ? theme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
+
+  const toggle = (event) => {
+    const next = isDark ? 'light' : 'dark'
+    switchThemeWithVenom(
+      () => {
+        // Synchronous, so the transition's "after" snapshot already has the new theme
+        document.documentElement.dataset.theme = next
+        try {
+          localStorage.setItem('theme', next)
+        } catch {
+          // storage unavailable: the choice lasts for this visit
+        }
+        flushSync(() => setTheme(next))
+      },
+      next === 'dark',
+      event.currentTarget,
+    )
+  }
+
   return (
-    <button type="button" className="theme-toggle" onClick={() => setTheme(isDark ? 'light' : 'dark')}>
-      {isDark ? 'Light theme' : 'Dark theme'}
+    <button
+      type="button"
+      className="theme-toggle"
+      onClick={toggle}
+      aria-label={isDark ? 'Switch to the light theme' : 'Switch to the dark theme'}
+      title={isDark ? 'Light theme' : 'Dark theme'}
+    >
+      {isDark ? (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.2" />
+          <path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" />
+        </svg>
+      ) : (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
+          <path d="M20.2 14.6A8.3 8.3 0 0 1 9.4 3.8a8.3 8.3 0 1 0 10.8 10.8Z" />
+        </svg>
+      )}
     </button>
   )
 }
