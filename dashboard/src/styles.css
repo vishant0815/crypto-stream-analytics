@@ -1,28 +1,42 @@
 /* ------------------------------------------------------------------ tokens */
+/* Glass on soft lavender white (light) or true black (dark), with powder blue,
+   lavender and peach glowing behind the glass. Pale hues are for glows and fills;
+   their deeper versions carry text, so every label stays readable (4.5:1 or more). */
 :root {
   color-scheme: light;
-  --surface: #eef1f4;      /* page */
-  --panel: #f8f9fb;        /* chart and side panels */
-  --ink: #172231;          /* primary text */
-  --ink-2: #5b6676;        /* secondary text */
-  --ink-3: #7d8796;        /* tertiary text, axis labels */
-  --rule: #d5dbe2;         /* hairlines */
-  --accent: #2b59c3;       /* "live": pipeline pulse, selection */
-  --accent-soft: rgba(43, 89, 195, 0.12);
-  --up: #0f8a6a;
-  --down: #c8443a;
-  --up-soft: rgba(15, 138, 106, 0.14);
-  --down-soft: rgba(200, 68, 58, 0.14);
-  --sma15: #2a78d6;        /* categorical slot 1 */
-  --sma60: #eb6834;        /* categorical slot 2 */
-  --seq-low: #f3f6fa;      /* heatmap: near zero recedes to the panel */
-  --seq-high: #104281;     /* heatmap: blue step 650 */
-  --div-neg: #b5394f;      /* correlation -1 */
-  --div-mid: #f0efec;      /* correlation 0: neutral grey */
-  --div-pos: #1c5cab;      /* correlation +1: blue step 550 */
+  --surface: #f6f3fc;                         /* soft lavender white */
+  --panel: rgba(255, 255, 255, 0.5);
+  --glass-bg: rgba(255, 255, 255, 0.52);
+  --glass-strong: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.85);
+  --glass-highlight: rgba(255, 255, 255, 0.9);
+  --glass-shadow: 0 10px 40px rgba(93, 84, 150, 0.13);
+  --blob-blue: rgba(176, 224, 230, 0.85);    /* powder blue */
+  --blob-lavender: rgba(214, 202, 247, 0.8);
+  --blob-peach: rgba(255, 203, 164, 0.75);   /* peach */
+  --ink: #1f1b3d;
+  --ink-2: #57527a;
+  --ink-3: #6e6a8c;
+  --rule: rgba(90, 80, 140, 0.16);
+  --accent: #2c6e99;                          /* powder blue, deep enough for text */
+  --accent-soft: rgba(110, 175, 210, 0.22);
+  --peach: #ffcba4;
+  --up: #1b7f69;
+  --down: #bd3f5a;
+  --up-soft: rgba(27, 127, 105, 0.16);
+  --down-soft: rgba(189, 63, 90, 0.14);
+  --sma15: #2c6e99;
+  --sma60: #c4683a;                           /* peach, deep enough for a line */
+  --seq-low: #f1effa;
+  --seq-high: #2c6e99;
+  --div-neg: #bd3f5a;
+  --div-mid: #ece8f6;
+  --div-pos: #2c6e99;
   --heat-ink-strong: #ffffff;
-  --alert: #a86400;         /* unusual minute: amber, with a text label */
-  --alert-soft: rgba(196, 127, 0, 0.14);
+  --alert: #a8501f;                           /* peach, deep enough for text */
+  --alert-soft: rgba(255, 190, 150, 0.45);
+  --tooltip-bg: #1f1b3d;
+  --tooltip-ink: #ffffff;
 
   --font: 'IBM Plex Sans', system-ui, sans-serif;
   --font-cond: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
@@ -35,61 +49,85 @@
   --t-xl: 1.6rem;
   --t-2xl: 2.25rem;
 
-  --radius: 10px;
+  --radius: 18px;
   --gap: 20px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
-    --surface: #0e151f;
-    --panel: #141d29;
-    --ink: #e6ecf2;
-    --ink-2: #9aa7b6;
-    --ink-3: #7b8796;
-    --rule: #273343;
-    --accent: #7fa2f5;
-    --accent-soft: rgba(127, 162, 245, 0.16);
-    --up: #2fb089;
-    --down: #e2655b;
-    --up-soft: rgba(47, 176, 137, 0.16);
-    --down-soft: rgba(226, 101, 91, 0.16);
-    --sma15: #3987e5;
-    --sma60: #d95926;
-    --seq-low: #182231;
-    --seq-high: #9ec5f4;
-    --div-neg: #e0707f;
-    --div-mid: #383835;
-    --div-pos: #86b6ef;
-    --heat-ink-strong: #0e151f;
-    --alert: #f0b44c;
-    --alert-soft: rgba(240, 180, 76, 0.16);
+    /* Same powder blue, lavender and peach; every background becomes true black */
+    --surface: #000000;
+    --panel: rgba(255, 255, 255, 0.045);
+    --glass-bg: rgba(255, 255, 255, 0.055);
+    --glass-strong: rgba(255, 255, 255, 0.085);
+    --glass-border: rgba(230, 224, 248, 0.13);
+    --glass-highlight: rgba(255, 255, 255, 0.07);
+    --glass-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+    --blob-blue: rgba(176, 224, 230, 0.16);
+    --blob-lavender: rgba(200, 186, 245, 0.13);
+    --blob-peach: rgba(255, 203, 164, 0.12);
+    --ink: #f1eefb;
+    --ink-2: #b6b1cf;
+    --ink-3: #8d88a8;
+    --rule: rgba(230, 224, 248, 0.14);
+    --accent: #b0e0e6;
+    --accent-soft: rgba(176, 224, 230, 0.16);
+    --peach: #ffcba4;
+    --up: #5cc9a7;
+    --down: #f27c92;
+    --up-soft: rgba(92, 201, 167, 0.18);
+    --down-soft: rgba(242, 124, 146, 0.18);
+    --sma15: #b0e0e6;
+    --sma60: #ffb98e;
+    --seq-low: #0d0f14;
+    --seq-high: #b0e0e6;
+    --div-neg: #f27c92;
+    --div-mid: #24222c;
+    --div-pos: #b0e0e6;
+    --heat-ink-strong: #000000;
+    --alert: #ffcba4;
+    --alert-soft: rgba(255, 203, 164, 0.16);
+    --tooltip-bg: #f1eefb;
+    --tooltip-ink: #000000;
   }
 }
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --surface: #0e151f;
-  --panel: #141d29;
-  --ink: #e6ecf2;
-  --ink-2: #9aa7b6;
-  --ink-3: #7b8796;
-  --rule: #273343;
-  --accent: #7fa2f5;
-  --accent-soft: rgba(127, 162, 245, 0.16);
-  --up: #2fb089;
-  --down: #e2655b;
-  --up-soft: rgba(47, 176, 137, 0.16);
-  --down-soft: rgba(226, 101, 91, 0.16);
-  --sma15: #3987e5;
-  --sma60: #d95926;
-  --seq-low: #182231;
-  --seq-high: #9ec5f4;
-  --div-neg: #e0707f;
-  --div-mid: #383835;
-  --div-pos: #86b6ef;
-  --heat-ink-strong: #0e151f;
-  --alert: #f0b44c;
-  --alert-soft: rgba(240, 180, 76, 0.16);
+  /* Same powder blue, lavender and peach; every background becomes true black */
+  --surface: #000000;
+  --panel: rgba(255, 255, 255, 0.045);
+  --glass-bg: rgba(255, 255, 255, 0.055);
+  --glass-strong: rgba(255, 255, 255, 0.085);
+  --glass-border: rgba(230, 224, 248, 0.13);
+  --glass-highlight: rgba(255, 255, 255, 0.07);
+  --glass-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+  --blob-blue: rgba(176, 224, 230, 0.16);
+  --blob-lavender: rgba(200, 186, 245, 0.13);
+  --blob-peach: rgba(255, 203, 164, 0.12);
+  --ink: #f1eefb;
+  --ink-2: #b6b1cf;
+  --ink-3: #8d88a8;
+  --rule: rgba(230, 224, 248, 0.14);
+  --accent: #b0e0e6;
+  --accent-soft: rgba(176, 224, 230, 0.16);
+  --peach: #ffcba4;
+  --up: #5cc9a7;
+  --down: #f27c92;
+  --up-soft: rgba(92, 201, 167, 0.18);
+  --down-soft: rgba(242, 124, 146, 0.18);
+  --sma15: #b0e0e6;
+  --sma60: #ffb98e;
+  --seq-low: #0d0f14;
+  --seq-high: #b0e0e6;
+  --div-neg: #f27c92;
+  --div-mid: #24222c;
+  --div-pos: #b0e0e6;
+  --heat-ink-strong: #000000;
+  --alert: #ffcba4;
+  --alert-soft: rgba(255, 203, 164, 0.16);
+  --tooltip-bg: #f1eefb;
+  --tooltip-ink: #000000;
 }
 
 /* ------------------------------------------------------------------- base */
@@ -144,17 +182,27 @@ a { color: var(--accent); }
 .connection[data-state='live'] .connection-dot { background: var(--up); }
 .connection[data-state='down'] .connection-dot { background: var(--down); }
 .theme-toggle {
-  border: 1px solid var(--rule); background: transparent; border-radius: 8px;
-  padding: 4px 10px; font-size: var(--t-sm); color: var(--ink-2); cursor: pointer;
+  position: relative;
+  display: inline-grid; place-items: center;
+  width: 40px; height: 40px; padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-highlight);
+  color: var(--ink); cursor: pointer;
+  transition: transform 160ms ease;
 }
+.theme-toggle:hover { transform: scale(1.06); }
+.theme-toggle:active { transform: scale(0.94); }
+.theme-toggle svg { width: 20px; height: 20px; }
 
 /* --------------------------------------------------------- pipeline band */
 .pipeline {
   position: relative;
-  border-top: 1px solid var(--ink);
-  border-bottom: 1px solid var(--rule);
-  padding: 18px 0 20px;
-  margin-bottom: 26px;
+  padding: 20px 22px 22px;
+  margin-bottom: 20px;
 }
 .pipeline-stages {
   position: relative;
@@ -166,11 +214,11 @@ a { color: var(--accent); }
   padding: 0;
 }
 .pipeline-track {
-  /* Runs through the stage dots: 18px band padding + 2px dot offset + 8px to the dot's centre, minus 1px */
+  /* Runs through the stage dots: 20px band padding + 2px dot offset + 8px to the dot's centre, minus 1px */
   position: absolute;
-  left: 10px;
-  right: calc((100% - 48px) / 5 - 10px);
-  top: 27px;
+  left: 32px;
+  right: calc((100% - 44px - 48px) / 5 - 10px + 22px);
+  top: 29px;
   height: 2px;
   background: var(--rule);
   overflow: hidden;
@@ -217,8 +265,8 @@ a { color: var(--accent); }
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0;
-  margin-bottom: 18px;
-  border-bottom: 1px solid var(--rule);
+  margin-bottom: 20px;
+  padding: 4px 18px 0;
 }
 .ticker {
   display: grid;
@@ -259,11 +307,7 @@ a { color: var(--accent); }
   gap: var(--gap);
   align-items: start;
 }
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius);
-}
+.panel { border-radius: var(--radius); }
 
 /* chart panel */
 .chart-panel { padding: 16px 16px 8px; }
@@ -314,9 +358,8 @@ a { color: var(--accent); }
   display: grid;
   grid-template-columns: 1.4fr 1fr 1fr;
   gap: var(--gap);
-  margin-top: 30px;
-  padding-top: 20px;
-  border-top: 1px solid var(--rule);
+  margin-top: 20px;
+  padding: 20px 22px 22px;
 }
 .details h3 { margin: 0 0 4px; font-size: var(--t-md); font-weight: 600; }
 .details .lede { margin: 0 0 12px; font-size: var(--t-sm); color: var(--ink-2); }
@@ -328,12 +371,12 @@ a { color: var(--accent); }
 .storage td + td { text-align: right; }
 
 .bars-tooltip {
-  position: absolute; pointer-events: none; background: var(--ink); color: var(--surface);
+  position: absolute; pointer-events: none; background: var(--tooltip-bg); color: var(--tooltip-ink);
   font-size: var(--t-xs); padding: 4px 8px; border-radius: 6px; white-space: nowrap; transform: translate(-50%, -110%);
 }
 
 /* ------------------------------------------------------------ alerts */
-.alerts { margin-top: 26px; }
+.alerts { margin-top: 20px; padding: 20px 22px 18px; }
 .alerts-head { max-width: 80ch; }
 .alerts h2 { margin: 0 0 4px; font-size: var(--t-lg); font-weight: 600; }
 .alerts .lede { margin: 0 0 10px; font-size: var(--t-sm); color: var(--ink-2); }
@@ -351,7 +394,7 @@ a { color: var(--accent); }
 .link-button:hover { text-decoration-color: var(--accent); }
 
 /* ------------------------------------------------- history (nightly batch) */
-.history { margin-top: 36px; padding-top: 22px; border-top: 1px solid var(--ink); }
+.history { margin-top: 20px; padding: 22px; }
 .history-head { max-width: 80ch; }
 .history h2 { margin: 0 0 4px; font-size: var(--t-lg); font-weight: 600; }
 .history h3 { margin: 0 0 10px; font-size: var(--t-md); font-weight: 600; }
@@ -375,7 +418,7 @@ a { color: var(--accent); }
 .heat th { font-weight: 500; color: var(--ink-2); padding: 0 6px 0 0; text-align: left; white-space: nowrap; }
 .heat thead th { text-align: center; padding: 0 0 4px; }
 .heat td { border-radius: 3px; }
-.corr td { width: 58px; height: 40px; text-align: center; font-weight: 600; font-size: var(--t-sm); background: var(--panel); }
+.corr td { width: 58px; height: 40px; text-align: center; font-weight: 600; font-size: var(--t-sm); background: var(--glass-strong); }
 .corr td.diag { background: repeating-linear-gradient(135deg, var(--rule) 0 2px, transparent 2px 6px); }
 .hourly { width: 100%; table-layout: fixed; }
 .hourly th[scope='row'] { width: 48px; }
@@ -385,6 +428,62 @@ a { color: var(--accent); }
 .heat-note { margin: 6px 0 0; font-size: var(--t-xs); color: var(--ink-2); min-height: 1.5em; }
 
 .colophon { margin-top: 36px; font-size: var(--t-sm); color: var(--ink-2); max-width: 80ch; }
+
+/* ------------------------------------------------------------- glass */
+/* The coloured glows behind everything: the glass blurs them, which is what makes it read as glass */
+body::before {
+  content: '';
+  position: fixed;
+  inset: -10vmax;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(38vmax 38vmax at 12% 8%, var(--blob-blue), transparent 70%),
+    radial-gradient(34vmax 34vmax at 92% 30%, var(--blob-lavender), transparent 70%),
+    radial-gradient(40vmax 40vmax at 78% 96%, var(--blob-peach), transparent 70%),
+    radial-gradient(30vmax 30vmax at 8% 82%, var(--blob-lavender), transparent 70%);
+}
+
+.glass,
+.pipeline,
+.tickers,
+.panel,
+.alerts,
+.details,
+.history {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  /* a soft shadow below, a thin light edge along the top */
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-highlight);
+}
+
+.segmented { background: var(--glass-strong); border-color: var(--glass-border); }
+.segmented button + button { border-left-color: var(--glass-border); }
+.ticker[aria-pressed='true'] { border-bottom-color: var(--accent); }
+.stage::before { background: var(--glass-strong); }
+.alert-badge { border: 1px solid color-mix(in oklab, var(--alert) 30%, transparent); }
+
+/* Browsers without backdrop-filter: a more opaque panel keeps text readable */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass, .pipeline, .tickers, .panel, .alerts, .details, .history { background: var(--glass-strong); }
+}
+
+/* --------------------------------------------------- venom theme switch */
+/* The browser's default cross-fade is replaced by the blob animation in venom.js */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+/* Going light: the old (dark) snapshot sits on top and retracts into the button */
+.venom-retract::view-transition-old(root) { z-index: 2; }
+.venom-retract::view-transition-new(root) { z-index: 1; }
+/* Going dark: the new (dark) snapshot grows over the old one */
+.venom-cover::view-transition-old(root) { z-index: 1; }
+.venom-cover::view-transition-new(root) { z-index: 2; }
 
 /* ------------------------------------------------------------- responsive */
 @media (max-width: 1080px) {
@@ -400,7 +499,8 @@ a { color: var(--accent); }
   .pipeline-stages { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 18px; }
   .pipeline-track { display: none; }
   .stage-figure { font-size: var(--t-xl); }
-  .tickers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tickers { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 4px 14px 0; }
+  .pipeline, .details, .history, .alerts { padding: 16px; }
   .ticker + .ticker { border-left: 0; padding-left: 0; }
   .ticker:nth-child(even) { padding-left: 14px; border-left: 1px solid var(--rule); }
   .ticker-spark { display: none; }  /* too narrow for symbol, change and a sparkline side by side */
