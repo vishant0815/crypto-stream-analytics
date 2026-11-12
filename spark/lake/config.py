@@ -21,6 +21,9 @@ class LakeSettings:
     batch_time_utc: str = os.getenv("BATCH_TIME_UTC", "00:30")
     batch_catch_up_days: int = int(os.getenv("BATCH_CATCH_UP_DAYS", "7"))
 
+    # Prometheus metrics endpoint of the archive job (0 turns it off)
+    metrics_port: int = int(os.getenv("METRICS_PORT", "9103"))
+
     spark_master: str = os.getenv("SPARK_MASTER", "local[2]")
     log_level: str = os.getenv("SPARK_LOG_LEVEL", "WARN")
 

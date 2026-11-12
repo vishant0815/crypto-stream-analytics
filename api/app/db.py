@@ -153,11 +153,19 @@ class Database:
         )
         per_minute = await self.fetch(
             """
-            SELECT extract(epoch FROM m)::bigint AS time, count(t.time)::int AS trades
+            -- Count the last 30 minutes in one pass with time_bucket, then fill in
+            -- empty minutes. (Joining each minute to trades by range was ~50x slower;
+            -- Grafana's /api/pipeline latency panel showed it.)
+            SELECT extract(epoch FROM m)::bigint AS time, coalesce(c.trades, 0)::int AS trades
             FROM generate_series(date_trunc('minute', now()) - INTERVAL '29 minutes',
                                  date_trunc('minute', now()), INTERVAL '1 minute') AS m
-            LEFT JOIN trades t ON t.time >= m AND t.time < m + INTERVAL '1 minute'
-            GROUP BY m ORDER BY m
+            LEFT JOIN (
+                SELECT time_bucket('1 minute', time) AS bucket, count(*) AS trades
+                FROM trades
+                WHERE time >= date_trunc('minute', now()) - INTERVAL '29 minutes'
+                GROUP BY 1
+            ) c ON c.bucket = m
+            ORDER BY m
             """
         )
         freshness = await self.fetch(

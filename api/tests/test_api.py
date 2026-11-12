@@ -313,3 +313,18 @@ def test_alerts_are_pushed_over_the_websocket(client):
     alert = msg["pairs"]["TS6-USD"]["alerts"][0]
     assert (alert["alert_type"], alert["score"], alert["model_ver"]) == ("VOLUME_SPIKE", 4.2, "kmeans-test")
     assert alert["features"] == {"log_volume_ratio": 3.1, "abs_ret_z": 0.4}
+
+
+def test_metrics_endpoint_counts_requests_by_route(client):
+    client.get("/api/pairs")
+    client.get("/api/candles", params={"pair": "bad"})
+    with client.websocket_connect("/ws/live") as ws:
+        ws.receive_text()
+        body = client.get("/metrics").text
+    # Route templates, not raw URLs, so query strings can't multiply the series
+    assert 'api_requests_total{route="/api/pairs",status="200"}' in body
+    assert 'api_requests_total{route="/api/candles",status="422"}' in body
+    assert "api_request_seconds_bucket" in body
+    assert "api_ws_clients 1.0" in body
+    assert 'api_cache_total{result="hit"}' in body or 'api_cache_total{result="miss"}' in body
+    assert "/metrics" not in client.get("/openapi.json").text  # not part of the public API docs

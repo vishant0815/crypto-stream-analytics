@@ -4,3 +4,4 @@ psycopg[binary,pool]==3.3.6
 psycopg-pool==3.3.3
 redis==8.1.0
 aiokafka[lz4]==0.14.0
+prometheus-client==0.26.0

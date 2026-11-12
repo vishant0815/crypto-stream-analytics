@@ -13,7 +13,7 @@ ADD ${MAVEN}/org/apache/spark/spark-sql-kafka-0-10_2.13/4.1.3/spark-sql-kafka-0-
     /opt/spark/jars/
 RUN chmod 644 /opt/spark/jars/*.jar
 
-RUN pip install --no-cache-dir "psycopg[binary]==3.3.6"
+RUN pip install --no-cache-dir "psycopg[binary]==3.3.6" "prometheus-client==0.26.0"
 
 WORKDIR /opt/app
 COPY streaming ./streaming

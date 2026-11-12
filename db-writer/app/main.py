@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import psycopg
 from confluent_kafka import Consumer, KafkaError, Message
 
+from app import metrics
 from app.config import settings
 from app.db import Database, WriteResult
 from app.mapping import BadMessage, TickerRow, TradeRow, decode, to_ticker_row, to_trade_row
@@ -36,11 +37,20 @@ class Stats:
         self.tickers += result.tickers_inserted
         self.duplicates += result.duplicates
         self.rejected += result.rejected
-        # How long from the trade happening on the exchange to being stored here
+        metrics.ROWS.labels("trades", "inserted").inc(result.trades_inserted)
+        metrics.ROWS.labels("ticker", "inserted").inc(result.tickers_inserted)
+        metrics.ROWS.labels("all", "duplicate").inc(result.duplicates)
+        metrics.ROWS.labels("all", "rejected").inc(result.rejected)
+        # How long from the trade happening on the exchange to being stored here.
+        # Trades Coinbase resent after a reconnect are old by design, so they're left out.
         now = datetime.now(timezone.utc)
         for t in trades:
-            self.latency_ms_total += (now - t.time).total_seconds() * 1000
+            if t.is_replay:
+                continue
+            seconds = (now - t.time).total_seconds()
+            self.latency_ms_total += seconds * 1000
             self.latency_samples += 1
+            metrics.TRADE_TO_DB.observe(max(0.0, seconds))
 
     def report(self) -> None:
         elapsed = time.monotonic() - self.window_start
@@ -74,6 +84,7 @@ class Writer:
         self.running = False
 
     def run(self) -> None:
+        metrics.serve(settings.metrics_port)
         self.consumer.subscribe([settings.topic_trades, settings.topic_ticker])
         self._connect_db()
         last_report = time.monotonic()
@@ -108,24 +119,29 @@ class Writer:
                     tickers.append(to_ticker_row(data))
             except BadMessage as exc:
                 self.stats.bad += 1
+                metrics.BAD_MESSAGES.inc()
                 log.warning("skipping %s offset %d: %s", msg.topic(), msg.offset(), exc)
 
+        metrics.BATCH_MESSAGES.observe(len(messages))
         result = self._write_with_retry(trades, tickers)
         if result is None:  # shutting down before the write succeeded; Kafka will replay it
             return
         self.stats.add(result, trades)
         self.consumer.commit(asynchronous=False)
+        metrics.LAST_COMMIT.set_to_current_time()
 
     def _write_with_retry(self, trades: list[TradeRow], tickers: list[TickerRow]) -> WriteResult | None:
         delay = settings.retry_initial_s
         paused = False
         while True:
             try:
-                result = self.db.write(trades, tickers)
+                with metrics.BATCH_SECONDS.time():
+                    result = self.db.write(trades, tickers)
                 if paused:
                     self.consumer.resume(self.consumer.assignment())
                 return result
             except psycopg.OperationalError as exc:
+                metrics.DB_ERRORS.inc()
                 log.error("database unavailable (%s), retrying in %.0fs", exc, delay)
 
             # Stop fetching new messages while the database is down, but keep

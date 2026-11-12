@@ -28,6 +28,9 @@ class Settings:
     # Reconnect if nothing (not even a heartbeat) arrives for this long
     idle_timeout_s: float = float(os.getenv("IDLE_TIMEOUT_S", "30"))
 
+    # Prometheus metrics endpoint (0 turns it off)
+    metrics_port: int = int(os.getenv("METRICS_PORT", "9101"))
+
     # Logging
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     stats_interval_s: float = float(os.getenv("STATS_INTERVAL_S", "10"))

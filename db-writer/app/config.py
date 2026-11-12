@@ -21,6 +21,9 @@ class Settings:
     retry_initial_s: float = float(os.getenv("RETRY_INITIAL_S", "1"))
     retry_max_s: float = float(os.getenv("RETRY_MAX_S", "30"))
 
+    # Prometheus metrics endpoint (0 turns it off)
+    metrics_port: int = int(os.getenv("METRICS_PORT", "9102"))
+
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     stats_interval_s: float = float(os.getenv("STATS_INTERVAL_S", "10"))
 

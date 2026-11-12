@@ -26,6 +26,7 @@ from pyspark.sql.types import BooleanType, StructField, StructType
 from lake.config import settings
 from lake.session import create_spark, hadoop_fs
 from lake.tables import ensure_tables
+from streaming import metrics
 from streaming.transforms import PRICE, SIZE, TRADE_JSON_SCHEMA
 
 log = logging.getLogger("archive-job")
@@ -103,6 +104,8 @@ def main() -> None:
     logging.getLogger("py4j").setLevel(logging.WARNING)
     spark = create_spark("crypto-archive")
     ensure_tables(spark)
+    spark.streams.addListener(metrics.MetricsListener())
+    metrics.serve(settings.metrics_port)
 
     raw = (
         spark.readStream.format("kafka")
