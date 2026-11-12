@@ -27,7 +27,12 @@ os.environ["DATABASE_URL"] = DB_URL
 os.environ["REDIS_URL"] = REDIS_URL
 os.environ["PUSH_INTERVAL_S"] = "0.5"
 # Separate topics, so a pipeline running on the same Kafka can't leak live prices into the tests
-TEST_TOPICS = {"TOPIC_TICKER": "test.raw.ticker", "TOPIC_TRADES": "test.raw.trades", "TOPIC_METRICS": "test.agg.metrics"}
+TEST_TOPICS = {
+    "TOPIC_TICKER": "test.raw.ticker",
+    "TOPIC_TRADES": "test.raw.trades",
+    "TOPIC_METRICS": "test.agg.metrics",
+    "TOPIC_ALERTS": "test.alerts",
+}
 os.environ.update(TEST_TOPICS)
 
 import psycopg  # noqa: E402

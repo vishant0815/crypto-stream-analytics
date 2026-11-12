@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 
 REDIS_LATEST = "live:latest"  # hash: pair -> JSON of the latest ticker/candle/indicators
 TRADES_PER_PUSH = 50          # most recent trades per pair kept for one push
+FEATURE_KEYS = ("abs_ret_z", "range_z", "log_volume_ratio", "log_trades_ratio", "vwap_dev_z", "buy_imbalance")
 
 
 def _num(value: Any) -> float | None:
@@ -62,6 +63,7 @@ class LiveState:
     pending_candles: dict[tuple[str, int], dict] = field(default_factory=dict)
     pending_indicators: dict[tuple[str, int], dict] = field(default_factory=dict)
     pending_trades: dict[str, deque] = field(default_factory=lambda: defaultdict(lambda: deque(maxlen=TRADES_PER_PUSH)))
+    pending_alerts: dict[tuple[str, int], dict] = field(default_factory=dict)
     # Health counters
     received: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     last_message_at: float | None = None
@@ -108,6 +110,22 @@ class LiveState:
                 }
             )
 
+        elif topic == settings.topic_alerts:
+            bucket = _epoch(value.get("bucket"))
+            if bucket is None:
+                return
+            self.received["alert"] += 1
+            alert = {
+                "time": int(bucket),
+                "symbol": pair,
+                "alert_type": value.get("alert_type"),
+                "score": value.get("score"),
+                "model_ver": value.get("model_ver"),
+                "driver": value.get("driver"),
+                "features": {k: value.get(k) for k in FEATURE_KEYS if k in value},
+            }
+            self.pending_alerts[(pair, alert["time"])] = alert
+
         elif topic == settings.topic_metrics:
             kind = value.get("type")
             bucket = _epoch(value.get("bucket"))
@@ -140,7 +158,8 @@ class LiveState:
 
     def take_update(self) -> dict[str, Any] | None:
         """Everything that changed since the last push, grouped by pair; clears the queue."""
-        if not (self.pending_tickers or self.pending_candles or self.pending_indicators or self.pending_trades):
+        if not (self.pending_tickers or self.pending_candles or self.pending_indicators or self.pending_trades
+                or self.pending_alerts):
             return None
         by_pair: dict[str, dict[str, Any]] = defaultdict(dict)
         for pair, ticker in self.pending_tickers.items():
@@ -152,10 +171,13 @@ class LiveState:
         for pair, trades in self.pending_trades.items():
             if trades:
                 by_pair[pair]["trades"] = list(trades)[::-1]  # newest first
+        for (pair, _), alert in sorted(self.pending_alerts.items(), key=lambda kv: kv[0][1]):
+            by_pair[pair].setdefault("alerts", []).append(alert)
         self.pending_tickers.clear()
         self.pending_candles.clear()
         self.pending_indicators.clear()
         self.pending_trades.clear()
+        self.pending_alerts.clear()
         return dict(by_pair)
 
     def snapshot(self) -> dict[str, Any]:
@@ -218,6 +240,7 @@ class LiveHub:
                 settings.topic_ticker,
                 settings.topic_trades,
                 settings.topic_metrics,
+                settings.topic_alerts,
                 bootstrap_servers=settings.kafka_bootstrap_servers,
                 group_id=None,               # every instance reads every partition
                 auto_offset_reset="latest",  # only live data; history comes from the database

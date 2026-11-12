@@ -252,3 +252,43 @@ class Database:
             """,
             {"limit": limit},
         )
+
+    # ----------------------------------------------------------------- alerts
+
+    async def alerts(self, pair: str | None, limit: int) -> list[dict[str, Any]]:
+        """Most recent anomaly alerts, newest first, with the minute's candle."""
+        return await self.fetch(
+            """
+            SELECT extract(epoch FROM a.time)::bigint AS time, p.symbol, a.alert_type, a.score,
+                   a.model_ver, a.details->>'driver' AS driver, a.details->'features' AS features,
+                   c.close::float8 AS close, c.volume::float8 AS volume, c.trade_count AS trades
+            FROM alerts a
+            JOIN pairs p USING (pair_id)
+            LEFT JOIN candles_1m c ON c.pair_id = a.pair_id AND c.bucket = a.time
+            WHERE (%(pair)s::text IS NULL OR p.symbol = %(pair)s)
+              AND a.time > now() - INTERVAL '7 days'
+            ORDER BY a.time DESC, p.pair_id
+            LIMIT %(limit)s
+            """,
+            {"pair": pair, "limit": limit},
+        )
+
+    async def model_info(self) -> dict[str, Any]:
+        """The active anomaly model (or the rule baseline) and how often it has fired."""
+        rows = await self.fetch(
+            """
+            SELECT version, extract(epoch FROM trained_at)::float8 AS trained_at,
+                   extract(epoch FROM data_from)::float8 AS data_from, extract(epoch FROM data_to)::float8 AS data_to,
+                   training_rows, k, silhouette, threshold, alert_rate, features
+            FROM model_registry WHERE is_active
+            """
+        )
+        counts = await self.fetch(
+            """
+            SELECT count(*)::int AS alerts_24h,
+                   count(*) FILTER (WHERE alert_type = 'VOLUME_SPIKE')::int AS volume_spikes_24h,
+                   count(*) FILTER (WHERE alert_type = 'PRICE_JUMP')::int AS price_jumps_24h
+            FROM alerts WHERE time > now() - INTERVAL '24 hours'
+            """
+        )
+        return {"model": rows[0] if rows else None, "mode": "model" if rows else "rules", **counts[0]}

@@ -1,8 +1,9 @@
-"""Runs the batch job every night, and catches up on days it missed.
+"""Runs the batch job and retrains the anomaly model every night, and catches up on days it missed.
 
 On start, any archived day in the last BATCH_CATCH_UP_DAYS days without a
-finished run ('ok' or 'mismatch') is processed, oldest first. Then it sleeps
-until BATCH_TIME_UTC (default 00:30) and runs the day that just ended.
+finished run ('ok' or 'mismatch') is processed, oldest first, and the model is
+retrained if anything was caught up. Then it sleeps until BATCH_TIME_UTC
+(default 00:30), runs the day that just ended and retrains the model.
 One SparkSession is kept for the life of the process.
 
 Run locally:  python -m lake.scheduler      (from the spark/ folder)
@@ -18,6 +19,7 @@ import psycopg
 from lake.batch_job import archived_days, run_day
 from lake.config import settings
 from lake.session import create_spark
+from ml.train_job import train_and_register
 
 log = logging.getLogger("batch-scheduler")
 
@@ -39,6 +41,13 @@ def days_to_catch_up(archived: list[date], done: set[date], today: date, window:
     return [d for d in archived if first <= d < today and d not in done]
 
 
+def retrain(spark) -> None:
+    try:
+        train_and_register(spark)
+    except Exception:
+        log.exception("model training failed; the live job keeps its current model")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("py4j").setLevel(logging.WARNING)
@@ -49,7 +58,8 @@ def main() -> None:
     spark = create_spark("crypto-batch-scheduler")
     try:
         today = datetime.now(timezone.utc).date()
-        for dt in days_to_catch_up(archived_days(spark), days_done(), today, settings.batch_catch_up_days):
+        missed = days_to_catch_up(archived_days(spark), days_done(), today, settings.batch_catch_up_days)
+        for dt in missed:
             if stop.is_set():
                 break
             log.info("catching up %s", dt)
@@ -57,6 +67,8 @@ def main() -> None:
                 run_day(spark, dt)
             except Exception:
                 log.exception("run for %s failed; it will be retried on the next start", dt)
+        if missed and not stop.is_set():
+            retrain(spark)
 
         while not stop.is_set():
             now = datetime.now(timezone.utc)
@@ -69,6 +81,7 @@ def main() -> None:
                 run_day(spark, dt)
             except Exception:
                 log.exception("run for %s failed; it will be retried on the next start", dt)
+            retrain(spark)
     finally:
         spark.stop()
         log.info("stopped")

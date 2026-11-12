@@ -176,6 +176,24 @@ async def analytics(
     return await cached(request, f"cache:analytics:{days}", lambda: request.app.state.db.analytics(days))
 
 
+@app.get("/api/alerts", tags=["anomalies"])
+async def alerts(
+    request: Request,
+    pair: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 30,
+) -> list[dict[str, Any]]:
+    """Recent unusual minutes flagged by the anomaly model (or the rule baseline), newest first."""
+    if pair is not None:
+        check_pair(pair)
+    return await cached(request, f"cache:alerts:{pair}:{limit}", lambda: request.app.state.db.alerts(pair, limit))
+
+
+@app.get("/api/model", tags=["anomalies"])
+async def model(request: Request) -> dict[str, Any]:
+    """The active anomaly model from the registry, and how many alerts it raised in 24 hours."""
+    return await cached(request, "cache:model", request.app.state.db.model_info)
+
+
 # ------------------------------------------------------------------------- websocket
 
 @app.websocket("/ws/live")

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useLive, useNow, usePolling } from './live.js'
 import { formatAge } from './format.js'
 import PipelineBand from './components/PipelineBand.jsx'
@@ -8,6 +8,7 @@ import IndicatorPanel from './components/IndicatorPanel.jsx'
 import TradeTape from './components/TradeTape.jsx'
 import PipelineDetails from './components/PipelineDetails.jsx'
 import BatchHistory from './components/BatchHistory.jsx'
+import AlertsPanel from './components/AlertsPanel.jsx'
 
 const REPO = 'https://github.com/vishant0815/crypto-stream-analytics'
 
@@ -50,6 +51,18 @@ export default function App() {
   const overview = usePolling('/api/overview', null, 30000)
   const pipeline = usePolling('/api/pipeline', null, 5000)
   const analytics = usePolling('/api/analytics', { days: 14 }, 300000) // changes once a night
+  const storedAlerts = usePolling('/api/alerts', { limit: 50 }, 60000)
+  const modelInfo = usePolling('/api/model', null, 60000)
+
+  // Alerts from the database plus any pushed live since the last poll, newest first, one per pair-minute
+  const alerts = useMemo(() => {
+    const seen = new Map()
+    for (const a of [...live.liveAlerts, ...(storedAlerts ?? [])]) {
+      const key = `${a.symbol}-${a.time}`
+      if (!seen.has(key)) seen.set(key, a)
+    }
+    return [...seen.values()].sort((a, b) => b.time - a.time)
+  }, [live.liveAlerts, storedAlerts])
   const subscribe = useCallback(live.subscribe, []) // stable identity for effects
 
   const selectPair = (p) => {
@@ -102,6 +115,7 @@ export default function App() {
           onIntervalChange={setCandleInterval}
           subscribe={subscribe}
           livePrice={livePrice}
+          alerts={alerts.filter((a) => a.symbol === pair)}
         />
         <div className="side">
           <IndicatorPanel
@@ -113,12 +127,14 @@ export default function App() {
         </div>
       </div>
 
+      <AlertsPanel alerts={alerts} modelInfo={modelInfo} onSelect={selectPair} />
+
       <PipelineDetails pipeline={pipeline} />
 
       <BatchHistory analytics={analytics} />
 
       <p className="colophon">
-        Built by Vishantkumar Bhavsar with Python, Kafka, Spark Structured Streaming and Spark SQL, Hadoop HDFS,
+        Built by Vishantkumar Bhavsar with Python, Kafka, Spark Structured Streaming, Spark SQL and MLlib, Hadoop HDFS,
         Hive, PostgreSQL with TimescaleDB,
         FastAPI, Redis and React. Market data from the Coinbase public feed; not financial advice.
       </p>

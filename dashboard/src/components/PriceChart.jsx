@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSeries, createChart } from 'lightweight-charts'
+import { CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSeries, createChart, createSeriesMarkers } from 'lightweight-charts'
 import { getJSON } from '../live.js'
 import { decimalsFor, formatNumber, formatPrice } from '../format.js'
 
@@ -28,6 +28,20 @@ function withAlpha(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
+// A moving-average line with a break wherever minutes are missing (the pipeline was down, say).
+// Without it, a gap of hours would look like a smooth slide from one price to another.
+// lightweight-charts ignores whitespace points inside a line and draws through them, but a
+// point's colour applies to the segment that starts at it: so the last point before each gap
+// gets a transparent colour. (Checked by rendering both options.)
+const GAP = 'rgba(0,0,0,0)'
+
+function lineWithGaps(points, step) {
+  return points.map((p, i) => {
+    const next = points[i + 1]
+    return next && next.time - p.time > step ? { ...p, color: GAP } : p
+  })
+}
+
 function volumeBar(c, colors) {
   return { time: c.time, value: c.volume, color: withAlpha(c.close >= c.open ? colors.up : colors.down, 0.35) }
 }
@@ -37,10 +51,11 @@ function volumeBar(c, colors) {
  * Loads history over REST, then applies live candles from the WebSocket.
  * For 5m and 1h, live 1-minute candles are rolled up into the current bar.
  */
-export default function PriceChart({ pair, interval, onIntervalChange, subscribe, livePrice }) {
+export default function PriceChart({ pair, interval, onIntervalChange, subscribe, livePrice, alerts = [] }) {
   const box = useRef(null)
   const chartRef = useRef(null)
   const series = useRef({})
+  const markers = useRef(null)
   const lastTime = useRef(0)
   const rollup = useRef({ bucket: null, minutes: new Map() })
   const [hover, setHover] = useState(null)
@@ -92,6 +107,7 @@ export default function PriceChart({ pair, interval, onIntervalChange, subscribe
       volume: chart.addSeries(HistogramSeries, { priceScaleId: 'volume', priceLineVisible: false, lastValueVisible: false }),
     }
     chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } })
+    markers.current = createSeriesMarkers(series.current.candles, [])
 
     chart.subscribeCrosshairMove((param) => {
       const bar = param.time ? param.seriesData.get(series.current.candles) : null
@@ -136,8 +152,8 @@ export default function PriceChart({ pair, interval, onIntervalChange, subscribe
         candles.applyOptions({ priceFormat: { type: 'price', precision: decimals, minMove: 10 ** -decimals } })
         candles.setData(data.candles.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })))
         volume.setData(data.candles.map((c) => volumeBar(c, colors)))
-        sma15.setData(data.indicators.filter((i) => i.sma_15 != null).map((i) => ({ time: i.time, value: i.sma_15 })))
-        sma60.setData(data.indicators.filter((i) => i.sma_60 != null).map((i) => ({ time: i.time, value: i.sma_60 })))
+        sma15.setData(lineWithGaps(data.indicators.filter((i) => i.sma_15 != null).map((i) => ({ time: i.time, value: i.sma_15 })), 60))
+        sma60.setData(lineWithGaps(data.indicators.filter((i) => i.sma_60 != null).map((i) => ({ time: i.time, value: i.sma_60 })), 60))
         lastTime.current = data.candles.at(-1)?.time ?? 0
 
         const newest = data.candles.at(-1)?.time
@@ -153,6 +169,29 @@ export default function PriceChart({ pair, interval, onIntervalChange, subscribe
       cancelled = true
     }
   }, [pair, interval])
+
+  // Unusual minutes, pinned above their candle (rolled up to the 5m / 1h bar they fall in)
+  useEffect(() => {
+    if (!markers.current) return
+    const step = INTERVALS[interval]
+    const color = cssVar('--alert')
+    const byBar = new Map()
+    for (const a of alerts) {
+      const t = Math.floor(a.time / step) * step
+      if (!byBar.has(t)) byBar.set(t, a)
+    }
+    markers.current.setMarkers(
+      [...byBar.entries()]
+        .sort((x, y) => x[0] - y[0])
+        .map(([time, a]) => ({
+          time,
+          position: 'aboveBar',
+          shape: 'arrowDown',
+          color,
+          text: a.alert_type === 'VOLUME_SPIKE' ? 'Volume' : a.alert_type === 'PRICE_JUMP' ? 'Jump' : 'Unusual',
+        })),
+    )
+  }, [alerts, interval, state, scheme])
 
   // Live updates
   useEffect(() => {
@@ -193,11 +232,16 @@ export default function PriceChart({ pair, interval, onIntervalChange, subscribe
       }
       if (interval === '1m') {
         for (const i of data.indicators ?? []) {
-          try {
-            if (i.sma_15 != null) sma15.update({ time: i.time, value: i.sma_15 })
-            if (i.sma_60 != null) sma60.update({ time: i.time, value: i.sma_60 })
-          } catch {
-            // an indicator older than the line's last point: already drawn
+          for (const [line, value] of [[sma15, i.sma_15], [sma60, i.sma_60]]) {
+            if (value == null) continue
+            try {
+              const last = line.data().at(-1)
+              // Live data resumed after a gap: hide the segment bridging it
+              if (last && 'value' in last && i.time - last.time > 60) line.update({ ...last, color: GAP })
+              line.update({ time: i.time, value })
+            } catch {
+              // an indicator older than the line's last point: already drawn
+            }
           }
         }
       }
