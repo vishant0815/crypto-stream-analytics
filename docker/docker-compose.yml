@@ -106,6 +106,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-crypto}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crypto}
       TIMESCALEDB_TELEMETRY: "off"
+      # Password for the read-only grafana_reader role (db/migrations/007_grafana_reader.sh)
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana}
     volumes:
       - timescale-data:/var/lib/postgresql/data
       # Schema runs automatically on the first start of an empty database
@@ -272,9 +274,63 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # ------------------------------------------------------------ monitoring
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.11.0
+    container_name: kafka-exporter
+    # Topic offsets and consumer group lag, for Prometheus
+    command: ["--kafka.server=kafka:29092", "--topic.filter=^[^_].*", "--group.filter=.*"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"   # Prometheus UI: targets, queries, alerts at /alerts
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle   # reload config with: curl -X POST localhost:9090/-/reload
+    volumes:
+      - ../monitoring/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.3.1
+    container_name: grafana
+    ports:
+      - "3001:3000"   # Grafana: http://localhost:3001 (pipeline health dashboard)
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-crypto}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana}
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Anyone can view the dashboards; only the admin can change anything
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/pipeline-health.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - timescaledb
+    restart: unless-stopped
+
 volumes:
   kafka-data:
   timescale-data:
   spark-checkpoints:
   namenode-data:
   datanode-data:
+  prometheus-data:
+  grafana-data:

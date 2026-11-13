@@ -1,0 +1,73 @@
+# Alert rules. Prometheus evaluates them continuously; firing alerts show at
+# http://localhost:9090/alerts and on the Grafana dashboard's annotations.
+groups:
+  - name: pipeline
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.job }} ({{ $labels.instance }}) is not answering Prometheus"
+
+      - alert: IngestionStalled
+        expr: time() - ingestion_last_message_timestamp_seconds > 60
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "No message from Coinbase for over a minute (heartbeats included)"
+
+      - alert: NoTradesStored
+        expr: sum(rate(dbwriter_rows_total{table="trades",outcome="inserted"}[5m])) == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "db-writer has stored no trades for 5 minutes"
+
+      - alert: DbWriterFallingBehind
+        expr: sum(kafka_consumergroup_lag{consumergroup="db-writer"}) > 5000
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "db-writer is {{ $value }} messages behind Kafka"
+
+      - alert: TradeToDatabaseSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(dbwriter_trade_to_db_seconds_bucket[5m]))) > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "95% of trades take over {{ $value | humanizeDuration }} to reach the database"
+
+      - alert: SparkBatchesSlow
+        expr: histogram_quantile(0.95, sum by (le, query) (rate(spark_streaming_batch_seconds_bucket{query="live-candles"}[5m]))) > 5
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Live candle batches take {{ $value | humanizeDuration }} (trigger is every second)"
+
+      - alert: SparkFallingBehindKafka
+        expr: spark_streaming_kafka_offsets_behind > 10000
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Spark query {{ $labels.query }} is {{ $value }} messages behind Kafka"
+
+      - alert: SparkQueryStalled
+        expr: time() - spark_streaming_last_progress_timestamp_seconds{query=~"live-candles|indicators"} > 120
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Spark query {{ $labels.query }} has not reported progress for 2 minutes"
+
+      - alert: DeadLetterSpike
+        expr: increase(ingestion_dlq_total[10m]) > 50
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} invalid messages sent to the dead-letter topic in 10 minutes"
+
+      - alert: ApiErrors
+        expr: sum(rate(api_requests_total{status=~"5.."}[5m])) / sum(rate(api_requests_total[5m])) > 0.05
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: "Over 5% of API requests are failing"

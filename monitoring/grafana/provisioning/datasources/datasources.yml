@@ -1,0 +1,25 @@
+# Data sources Grafana creates on start. Fixed uids let the dashboard refer to them.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 5s          # matches the scrape interval
+
+  - name: TimescaleDB
+    uid: timescaledb
+    type: grafana-postgresql-datasource
+    url: timescaledb:5432
+    user: grafana_reader         # read-only role, see db/migrations/007_grafana_reader.sh
+    jsonData:
+      database: ${POSTGRES_DB}
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: true
+      maxOpenConns: 5
+    secureJsonData:
+      password: ${GRAFANA_DB_PASSWORD}

@@ -11,6 +11,7 @@ import signal
 import time
 from typing import Any
 
+from app import metrics
 from app.client import CoinbaseStream
 from app.config import settings
 from app.models import ParseResult, parse_market_trades, parse_ticker, utc_now
@@ -44,6 +45,7 @@ class Stats:
 
 def route(message: dict[str, Any], sink: Sink, stats: Stats) -> None:
     channel = message.get("channel")
+    metrics.LAST_MESSAGE.set_to_current_time()
 
     if channel == "market_trades":
         result, topic = parse_market_trades(message), settings.topic_trades
@@ -54,6 +56,7 @@ def route(message: dict[str, Any], sink: Sink, stats: Stats) -> None:
     elif channel == "_invalid" or message.get("type") == "error":
         sink.publish(settings.topic_dlq, None, {"error": "bad message", "raw": message, "ingest_time": utc_now()})
         stats.dlq += 1
+        metrics.DLQ.inc()
         if message.get("type") == "error":
             log.error("coinbase error: %s", message.get("message"))
         return
@@ -70,10 +73,18 @@ def _publish(result: ParseResult, topic: str, sink: Sink, stats: Stats) -> None:
         sink.publish(settings.topic_dlq, None, {**bad, "topic": topic, "ingest_time": utc_now()})
 
     stats.dlq += len(result.errors)
+    metrics.DLQ.inc(len(result.errors))
     if topic == settings.topic_trades:
         stats.trades += len(result.events)
+        metrics.EVENTS.labels("trade").inc(len(result.events))
+        now = utc_now()
+        for event in result.events:
+            # Coinbase resends recent trades after a reconnect; those would skew the lag
+            if not event.replay:
+                metrics.EXCHANGE_LAG.observe(max(0.0, (now - event.exchange_time).total_seconds()))
     else:
         stats.tickers += len(result.events)
+        metrics.EVENTS.labels("ticker").inc(len(result.events))
 
 
 async def run(dry_run: bool) -> None:
@@ -86,6 +97,7 @@ async def run(dry_run: bool) -> None:
         idle_timeout_s=settings.idle_timeout_s,
     )
     stats = Stats()
+    metrics.serve(settings.metrics_port, sink, stream)
     last_report = time.monotonic()
 
     try:

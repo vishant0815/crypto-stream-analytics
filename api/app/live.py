@@ -23,6 +23,7 @@ from aiokafka import AIOKafkaConsumer
 from fastapi import WebSocket
 from redis.asyncio import Redis
 
+from app import metrics
 from app.config import settings
 
 log = logging.getLogger(__name__)
@@ -254,6 +255,7 @@ class LiveHub:
                 backoff = 1.0
                 log.info("kafka consumer started")
                 async for msg in consumer:
+                    metrics.KAFKA_MESSAGES.labels(msg.topic).inc()
                     try:
                         self.state.apply(msg.topic, json.loads(msg.value))
                     except (ValueError, TypeError):
@@ -304,8 +306,10 @@ class LiveHub:
     async def _send(self, client: Client, message: dict[str, Any]) -> None:
         try:
             await asyncio.wait_for(client.ws.send_text(json.dumps(message)), settings.ws_send_timeout_s)
+            metrics.WS_SENT.inc()
         except Exception:
             # Too slow or gone: drop it so it can't hold back everyone else
+            metrics.WS_DROPPED.inc()
             self.clients.discard(client)
             try:
                 await client.ws.close(code=1011)

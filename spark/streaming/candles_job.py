@@ -32,8 +32,10 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.streaming import StreamingQueryListener
 
+from streaming import metrics
 from streaming.config import settings
 from ml.features import minute_features
+from ml.model import ALERT_TYPE
 from streaming.scoring import LiveScorer
 from streaming.sinks import (
     ISO_UTC,
@@ -166,8 +168,12 @@ def write_indicators(closed: DataFrame, batch_id: int) -> None:
                     r.asDict()
                     for r in alerts_df.withColumn("bucket_iso", F.date_format("bucket", ISO_UTC)).collect()
                 ]
+                metrics.MODEL.clear()
+                metrics.MODEL.labels(SCORER.version).set(1)
                 if alerts:
                     upsert_alerts(alerts)
+                    for a in alerts:
+                        metrics.ALERTS.labels(a["alert_type"]).inc()
                     publish(alerts_df, "alert", settings.topic_alerts)
                     for a in alerts:
                         log.info("ALERT %s %s %s score %.2f (driver %s, %s)", a["pair"], a["bucket_iso"],
@@ -247,6 +253,10 @@ def main() -> None:
     logging.getLogger("py4j").setLevel(logging.WARNING)  # very chatty at INFO
     spark = create_spark()
     spark.streams.addListener(ProgressLogger())
+    spark.streams.addListener(metrics.MetricsListener())
+    for alert_type in set(ALERT_TYPE.values()):  # so charts show 0 rather than "no data" until the first alert
+        metrics.ALERTS.labels(alert_type)
+    metrics.serve(settings.metrics_port)
     queries = start(spark)
 
     # The signal handler only sets a flag. Calling into Spark from inside a

@@ -31,6 +31,9 @@ class Settings:
     # Minutes of candle history loaded to compute the longest indicator (SMA 60)
     indicator_history_minutes: int = int(os.getenv("INDICATOR_HISTORY_MINUTES", "65"))
 
+    # Prometheus metrics endpoint (0 turns it off)
+    metrics_port: int = int(os.getenv("METRICS_PORT", "9103"))
+
     spark_master: str = os.getenv("SPARK_MASTER", "local[2]")
     # Each partition is a separate state store per stateful step, with its own
     # load/commit cost every batch; 5 pairs need very few

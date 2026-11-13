@@ -13,11 +13,12 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from redis.asyncio import Redis
 
+from app import metrics
 from app.config import settings
 from app.db import Database
 from app.live import LiveHub
@@ -35,6 +36,8 @@ async def lifespan(app: FastAPI):
     await db.open()
     hub = LiveHub(redis)
     await hub.start()
+    metrics.WS_CLIENTS.set_function(lambda: len(hub.clients))
+    metrics.KAFKA_CONNECTED.set_function(lambda: 1 if hub.kafka_connected else 0)
     app.state.db, app.state.redis, app.state.hub = db, redis, hub
     log.info("api started")
     try:
@@ -53,6 +56,7 @@ app = FastAPI(
 )
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(metrics.MetricsMiddleware)
 
 
 # --------------------------------------------------------------------------- helpers
@@ -73,8 +77,11 @@ async def cached(request: Request, key: str, load: Callable[[], Awaitable[Any]])
     try:
         hit = await redis.get(key)
         if hit is not None:
+            metrics.CACHE.labels("hit").inc()
             return json.loads(hit)
+        metrics.CACHE.labels("miss").inc()
     except Exception as exc:
+        metrics.CACHE.labels("error").inc()
         log.warning("redis get failed: %s", exc)
     value = await load()
     try:
@@ -192,6 +199,12 @@ async def alerts(
 async def model(request: Request) -> dict[str, Any]:
     """The active anomaly model from the registry, and how many alerts it raised in 24 hours."""
     return await cached(request, "cache:model", request.app.state.db.model_info)
+
+
+@app.get("/metrics", include_in_schema=False)
+async def prometheus_metrics() -> Response:
+    """For Prometheus. nginx doesn't forward /metrics, so it isn't public."""
+    return Response(metrics.latest(), media_type=metrics.CONTENT_TYPE)
 
 
 # ------------------------------------------------------------------------- websocket

@@ -1,0 +1,173 @@
+name: CI
+
+# Every push to main and every pull request: all test suites, the dashboard
+# build, every Docker image, and the monitoring configuration.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the run still going for the old one
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  services:
+    name: Python services (ingestion, db-writer, API)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    # Real TimescaleDB, Redis and Kafka, the same versions as docker-compose.yml.
+    # The integration tests write to them, so they get their own throwaway copies.
+    services:
+      timescaledb:
+        image: timescale/timescaledb:2.22.1-pg16
+        env:
+          POSTGRES_USER: crypto
+          POSTGRES_PASSWORD: crypto
+          POSTGRES_DB: crypto_test   # the tests refuse any database not ending in _test
+          TIMESCALEDB_TELEMETRY: "off"
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U crypto -d crypto_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:8.2.1-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      kafka:
+        # With no settings, this image runs a single-node KRaft broker on localhost:9092
+        image: apache/kafka:3.9.1
+        ports: ["9092:9092"]
+        options: >-
+          --health-cmd "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
+          --health-interval 10s --health-timeout 10s --health-retries 10 --health-start-period 20s
+
+    env:
+      TEST_DATABASE_URL: postgresql://crypto:crypto@localhost:5432/crypto_test
+      TEST_REDIS_URL: redis://localhost:6379/15
+      KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: "*/requirements*.txt"
+
+      - name: Apply the database migrations
+        # The same files, in the same order, that TimescaleDB runs on first start in Docker
+        env:
+          PGHOST: localhost
+          PGUSER: crypto
+          PGPASSWORD: crypto
+          PGDATABASE: crypto_test
+          POSTGRES_USER: crypto
+          POSTGRES_DB: crypto_test
+        run: |
+          for f in db/migrations/*; do
+            echo "::group::$f"
+            case "$f" in
+              *.sql) psql -v ON_ERROR_STOP=1 -q -f "$f" ;;
+              *.sh)  sh "$f" ;;
+            esac
+            echo "::endgroup::"
+          done
+
+      - name: Ingestion tests
+        working-directory: ingestion
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+      - name: db-writer tests (against TimescaleDB)
+        working-directory: db-writer
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+      - name: API tests (against TimescaleDB, Redis and Kafka)
+        working-directory: api
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+  spark:
+    name: Spark jobs (streaming, lake, ML)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: spark/requirements*.txt
+
+      - name: Spark tests (local Spark, no cluster needed)
+        working-directory: spark
+        run: |
+          pip install -r requirements-dev.txt
+          pytest -q
+
+  dashboard:
+    name: Dashboard build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install and build
+        working-directory: dashboard
+        run: |
+          npm ci
+          npm run build
+
+  docker:
+    name: Docker images and monitoring config
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check docker-compose.yml
+        run: docker compose -f docker/docker-compose.yml config --quiet
+
+      - name: Check Prometheus config and alert rules
+        run: |
+          docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" \
+            --entrypoint promtool prom/prometheus:v3.16.0 check config /etc/prometheus/prometheus.yml
+
+      - name: Check the Grafana dashboard is valid JSON
+        run: python3 -m json.tool monitoring/grafana/dashboards/pipeline-health.json > /dev/null
+
+      - name: Build every image
+        run: docker compose -f docker/docker-compose.yml build
+
+      - name: Spark image can load every job (catches packages missing from the image)
+        run: |
+          docker compose -f docker/docker-compose.yml run --rm --no-deps --entrypoint sh spark-batch -c '
+            PYTHONPATH="$(ls /opt/spark/python/lib/*.zip | tr "\n" ":")/opt/app" python3 -c "
+          import streaming.candles_job, streaming.metrics, lake.archive_job, lake.batch_job, lake.scheduler, ml.train_job
+          print(\"all Spark jobs import\")"'
