@@ -61,14 +61,8 @@
     {
       "title": "Live dashboard",
       "type": "link",
-      "url": "http://localhost:3000",
-      "targetBlank": true
-    },
-    {
-      "title": "Prometheus alerts",
-      "type": "link",
-      "url": "http://localhost:9090/alerts",
-      "targetBlank": true
+      "url": "../../../",
+      "targetBlank": false
     }
   ],
   "panels": [

@@ -1,0 +1,147 @@
+# Production settings, layered over docker-compose.yml:
+#
+#   docker compose --env-file .env -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
+#
+# (deploy/setup-server.sh and deploy/update.sh run exactly this.)
+#
+# What changes from local development:
+# - Only Caddy is reachable from the internet, on 80 and 443 (HTTPS). The site,
+#   /api, /ws and /grafana all go through it.
+# - Admin pages (Prometheus, Alertmanager, Spark UI, HDFS, the database) listen on
+#   the server's 127.0.0.1 only: open them through an SSH tunnel. Docker publishes
+#   ports past the firewall, so binding to 127.0.0.1 is what keeps them private.
+# - The API, Kafka and the dashboard are not published at all.
+# - Passwords must be set in .env: no defaults.
+# - Memory limits for an 8 GB server, and log rotation so logs can't fill the disk.
+# - Kafka UI (no login) only starts with --profile debug.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2.11.9-alpine
+    container_name: caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env, e.g. crypto.example.com}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env; Let's Encrypt emails it about certificate problems}
+    volumes:
+      - ../deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data       # certificates: keep them, Let's Encrypt limits how often you can ask
+      - caddy-config:/config
+    depends_on:
+      - dashboard
+    mem_limit: 128m
+    logging: *logging
+    restart: unless-stopped
+
+  kafka:
+    ports: !reset []
+    environment:
+      KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+    mem_limit: 1g
+    logging: *logging
+
+  kafka-init:
+    logging: *logging
+
+  kafka-ui:
+    profiles: ["debug"]   # docker compose ... --profile debug up -d kafka-ui
+    ports: !override
+      - "127.0.0.1:8080:8080"
+    mem_limit: 512m
+    logging: *logging
+
+  ingestion:
+    mem_limit: 192m
+    logging: *logging
+
+  timescaledb:
+    ports: !override
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:?Set GRAFANA_DB_PASSWORD in .env}
+    shm_size: 256m
+    mem_limit: 1536m
+    logging: *logging
+
+  db-writer:
+    mem_limit: 192m
+    logging: *logging
+
+  spark-streaming:
+    ports: !override
+      - "127.0.0.1:4040:4040"
+    environment:
+      SPARK_DRIVER_MEMORY: 1g
+    mem_limit: 1792m
+    logging: *logging
+
+  redis:
+    mem_limit: 192m
+    logging: *logging
+
+  api:
+    ports: !reset []
+    mem_limit: 384m
+    logging: *logging
+
+  dashboard:
+    ports: !reset []
+    mem_limit: 64m
+    logging: *logging
+
+  namenode:
+    ports: !override
+      - "127.0.0.1:9870:9870"
+    mem_limit: 768m
+    logging: *logging
+
+  datanode:
+    mem_limit: 768m
+    logging: *logging
+
+  spark-archive:
+    mem_limit: 1536m
+    logging: *logging
+
+  spark-batch:
+    mem_limit: 1536m
+    logging: *logging
+
+  kafka-exporter:
+    mem_limit: 64m
+    logging: *logging
+
+  prometheus:
+    ports: !override
+      - "127.0.0.1:9090:9090"
+    mem_limit: 512m
+    logging: *logging
+
+  alertmanager:
+    ports: !override
+      - "127.0.0.1:9093:9093"
+    mem_limit: 64m
+    logging: *logging
+
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: https://${DOMAIN}/grafana/
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    mem_limit: 256m
+    logging: *logging
+
+volumes:
+  caddy-data:
+  caddy-config:

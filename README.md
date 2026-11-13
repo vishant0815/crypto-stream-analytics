@@ -113,8 +113,9 @@ docker logs -f spark-streaming  # input rate, batch time, state size, watermark
 ```
 
 - **Dashboard: http://localhost:3000**
-- **Grafana: http://localhost:3001** (pipeline health; viewing needs no login, admin / `GRAFANA_ADMIN_PASSWORD` to edit)
+- **Grafana: http://localhost:3000/grafana/** (pipeline health, also linked from the dashboard header; viewing needs no login, admin / `GRAFANA_ADMIN_PASSWORD` to edit)
 - Prometheus: http://localhost:9090 (targets, queries, and alert rules at `/alerts`)
+- Alertmanager: http://localhost:9093 (firing alerts; emails them once `ALERT_EMAIL_TO` is set)
 - API docs: http://localhost:8000/docs
 - Kafka UI: http://localhost:8080 (messages arriving in `raw.trades`, `raw.ticker` and `agg.metrics`)
 - Spark UI: http://localhost:4040 (Structured Streaming tab: query progress and batch durations)
@@ -123,7 +124,7 @@ docker logs -f spark-streaming  # input rate, batch time, state size, watermark
 
 Indicators need 15 minutes of continuous data before they appear, and the 60-minute average needs an hour. The data-lake history fills in after the first nightly run (00:30 UTC) for a day the archive covered.
 
-The whole stack runs 17 containers, three of them Spark, so give Docker Desktop at least 8 GB of memory.
+The whole stack runs 18 containers, three of them Spark, so give Docker Desktop at least 8 GB of memory.
 
 Already ran an earlier version? The schema only runs automatically on an empty database, so apply any migrations you don't have yet, in order:
 
@@ -315,7 +316,7 @@ Every service serves Prometheus metrics, Prometheus scrapes them every 5 seconds
 
 Spark tracks its Kafka offsets in checkpoints rather than a consumer group, so its lag comes from a `StreamingQueryListener` that turns each progress report into metrics. The API's `/metrics` is not forwarded by nginx, so it isn't public. Grafana reads TimescaleDB as `grafana_reader`, a read-only login with a statement timeout.
 
-**Alert rules** (`monitoring/prometheus/alerts.yml`): a service down, Coinbase silent for a minute, no trades stored for 5 minutes, db-writer over 5,000 messages behind, 95th-percentile trade → database latency over 5 s, slow or stalled Spark queries, Spark falling behind Kafka, a dead-letter spike, and API errors over 5%. Firing alerts appear at http://localhost:9090/alerts and as markers on the Grafana charts.
+**Alert rules** (`monitoring/prometheus/alerts.yml`): a service down, Coinbase silent for a minute, no trades stored for 5 minutes, db-writer over 5,000 messages behind, 95th-percentile trade → database latency over 5 s, slow or stalled Spark queries, Spark falling behind Kafka, a dead-letter spike, and API errors over 5%. Firing alerts appear in Prometheus and as markers on the Grafana charts, and **Alertmanager emails them** (grouped, with a follow-up when they resolve) once SMTP settings are in `.env`.
 
 The monitoring has already paid off: the API latency panel showed `/api/pipeline` taking 1–2 seconds at the 95th percentile. The cause was a query joining each of 30 minutes to the trades table by range; counting with `time_bucket()` in one pass made it about 50 times faster.
 
@@ -328,7 +329,22 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every push to `main` and eve
 | Python services | Applies every migration to a real TimescaleDB, then runs the ingestion, db-writer and API tests against it, Redis and Kafka (service containers, same versions as Docker Compose) |
 | Spark jobs | Streaming transforms, the data-lake batch and the ML model, on local Spark with Java 21 |
 | Dashboard | `npm ci` and the production build |
-| Docker and config | `docker compose config`, `promtool check config` (Prometheus config and alert rules), the Grafana dashboard JSON, and a build of every image |
+| Docker and config | `docker compose config`, and the production config refusing to start without passwords; `promtool` (Prometheus config and alert rules), `amtool` (both Alertmanager configs), `caddy validate`, `nginx -t`, `shellcheck` on the deploy scripts, the Grafana dashboard JSON; a build of every image, and every Spark job loading inside its image |
+
+## Deployment
+
+The same stack runs on one Linux server with HTTPS: one command sets up the server and deploys, and only the HTTPS proxy is open to the internet. **[docs/DEPLOY.md](docs/DEPLOY.md)** has the full guide; in short:
+
+```bash
+# On a fresh Ubuntu 24.04 server (4 vCPU, 8 GB), with the domain's A record pointing at it
+curl -fsSL https://raw.githubusercontent.com/vishant0815/crypto-stream-analytics/main/deploy/setup-server.sh -o setup-server.sh
+sudo DOMAIN=crypto.yourdomain.com ACME_EMAIL=you@example.com bash setup-server.sh
+```
+
+- **Caddy** gets and renews a Let's Encrypt certificate and adds security headers; the dashboard, `/api`, `/ws` and `/grafana/` all sit behind it.
+- **`docker-compose.prod.yml`** layers production settings over the normal compose file: admin pages bound to `127.0.0.1` (SSH tunnel), API and Kafka not published, required random passwords, memory limits and log rotation.
+- **nginx rate limits**: 10 API requests a second per visitor (bursts of 40) and 5 live connections; beyond that, `429 Too Many Requests`.
+- **Alert emails** through Alertmanager, a nightly database backup kept for 7 days, and `deploy/update.sh` to roll out new code.
 
 ## Project structure
 
@@ -348,9 +364,11 @@ crypto-stream-analytics/
 │   └── queries/        # analysis queries
 ├── monitoring/
 │   ├── prometheus/     # scrape config and alert rules
+│   ├── alertmanager/   # alert emails, configured from the environment
 │   └── grafana/        # provisioned data sources and the pipeline health dashboard
-├── docker/             # docker-compose.yml (each service's Dockerfile is in its own folder)
-├── docs/               # screenshots
+├── deploy/             # server setup, update and backup scripts; Caddyfile (HTTPS)
+├── docker/             # docker-compose.yml, docker-compose.prod.yml (Dockerfiles live in each service)
+├── docs/               # deployment guide and screenshots
 └── .github/workflows/  # CI
 ```
 
@@ -363,6 +381,7 @@ crypto-stream-analytics/
 - [x] HDFS archive, Hive tables, batch analytics
 - [x] ML anomaly detection and live scoring
 - [x] Pipeline monitoring (Prometheus, Grafana), tests and CI
+- [x] Production deployment: HTTPS, locked-down ports, rate limits, alert emails, backups
 
 ## Author
 
