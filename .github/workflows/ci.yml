@@ -159,6 +159,40 @@ jobs:
           docker run --rm -v "$PWD/monitoring/prometheus:/etc/prometheus:ro" \
             --entrypoint promtool prom/prometheus:v3.16.0 check config /etc/prometheus/prometheus.yml
 
+      - name: Check the production settings
+        # Must refuse to start without passwords, and be valid once they are set
+        run: |
+          prod="docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml"
+          if $prod config --quiet 2>/dev/null; then
+            echo "production config started without required settings"; exit 1
+          fi
+          printf '%s\n' DOMAIN=ci.example.com ACME_EMAIL=ci@example.com POSTGRES_PASSWORD=x1 \
+            GRAFANA_DB_PASSWORD=x2 GRAFANA_ADMIN_PASSWORD=x3 > /tmp/prod.env
+          $prod --env-file /tmp/prod.env config --quiet
+
+      - name: Check the Caddyfile (HTTPS proxy)
+        run: |
+          docker run --rm -e DOMAIN=ci.example.com -e ACME_EMAIL=ci@example.com \
+            -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11.9-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Check the dashboard's nginx config
+        run: |
+          docker run --rm --add-host api:127.0.0.1 \
+            -v "$PWD/dashboard/nginx.conf:/etc/nginx/conf.d/default.conf:ro" \
+            nginx:1.28.0-alpine nginx -t
+
+      - name: Check both Alertmanager configs (with and without alert emails)
+        run: |
+          check='sed "s#^exec /bin/alertmanager.*#exec /bin/amtool check-config /tmp/alertmanager.yml#" /etc/alertmanager/entrypoint.sh > /tmp/check.sh && sh /tmp/check.sh'
+          am="docker run --rm -v $PWD/monitoring/alertmanager:/etc/alertmanager:ro --entrypoint sh"
+          $am prom/alertmanager:v0.35.0 -c "$check"
+          $am -e ALERT_EMAIL_TO=ci@example.com -e SMTP_HOST=smtp.example.com:587 -e SMTP_USER=ci@example.com \
+              -e SMTP_PASSWORD=x prom/alertmanager:v0.35.0 -c "$check"
+
+      - name: Lint the shell scripts
+        run: shellcheck -S warning deploy/*.sh monitoring/alertmanager/entrypoint.sh db/migrations/*.sh
+
       - name: Check the Grafana dashboard is valid JSON
         run: python3 -m json.tool monitoring/grafana/dashboards/pipeline-health.json > /dev/null
 

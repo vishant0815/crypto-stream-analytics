@@ -124,6 +124,9 @@ export default function App() {
             {statusText}
           </span>
           <ThemeToggle />
+          <a href="/grafana/d/pipeline-health/pipeline-health" style={{ fontSize: 'var(--t-sm)' }}>
+            Pipeline health
+          </a>
           <a href={REPO} target="_blank" rel="noreferrer" style={{ fontSize: 'var(--t-sm)' }}>
             Source on GitHub
           </a>

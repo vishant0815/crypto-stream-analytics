@@ -300,14 +300,34 @@ services:
       - prometheus-data:/prometheus
     restart: unless-stopped
 
+  alertmanager:
+    image: prom/alertmanager:v0.35.0
+    container_name: alertmanager
+    ports:
+      - "9093:9093"   # Alertmanager UI: firing alerts, silences
+    # Builds its config from the environment: emails alerts when ALERT_EMAIL_TO is set
+    entrypoint: ["/bin/sh", "/etc/alertmanager/entrypoint.sh"]
+    environment:
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
+      ALERT_EMAIL_FROM: ${ALERT_EMAIL_FROM:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    volumes:
+      - ../monitoring/alertmanager:/etc/alertmanager:ro
+      - alertmanager-data:/alertmanager
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:13.3.1
     container_name: grafana
-    ports:
-      - "3001:3000"   # Grafana: http://localhost:3001 (pipeline health dashboard)
+    # No port of its own: the dashboard's nginx serves it at http://localhost:3000/grafana/
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-crypto}
       GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:-grafana}
+      # Served under /grafana/ by the dashboard's nginx (and by Caddy in production)
+      GF_SERVER_ROOT_URL: ${PUBLIC_URL:-http://localhost:3000}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       # Anyone can view the dashboards; only the admin can change anything
@@ -334,3 +354,4 @@ volumes:
   datanode-data:
   prometheus-data:
   grafana-data:
+  alertmanager-data:

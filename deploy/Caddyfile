@@ -1,0 +1,27 @@
+# The only thing on the server open to the internet.
+# Caddy gets a free HTTPS certificate for DOMAIN from Let's Encrypt and renews it
+# itself, redirects http:// to https://, and passes every request to the
+# dashboard's nginx, which serves the site, /api, /ws and /grafana.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	reverse_proxy dashboard:80
+
+	log {
+		output stdout
+		format console
+	}
+}
